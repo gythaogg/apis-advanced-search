@@ -1,6 +1,6 @@
 [project]
 name = "apis-advanced-search"
-version = "0.0.2"
+version = "0.0.2a"
 description = "An intuitive querybuilder inteface for prosopographical projects built on apis-core-rdf"
 authors = [ { name = "Saranya Balasubramanian" } ]
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ classifiers = [
 ]
 readme = "README.md"
 keywords = ["entities", "relationships", "querybuilder", "prosopographical research"]
-urls = { "Homepage" = "https://github.com/gythaogg/apis-datamodel" }
+urls = { "Homepage" = "https://github.com/gythaogg/apis-advanced-search" }
 requires-python = ">=3.13"
 dependencies = [
     "apis-core-rdf>=0.74.0",
