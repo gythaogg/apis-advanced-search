@@ -3,10 +3,18 @@
 
   const state = {
     model: null,
-    fields: [],
     tree: null,
     queryUrl: null,
     csrfToken: "",
+    // Fields/relation-options are fetched once per model label and kept
+    // for the rest of the session - a relation filter's target (or a
+    // relation's own fields, for the "about this relation itself" block)
+    // needs to render synchronously, so by the time a node is set up to
+    // use a model's context, that model's fields must already be cached.
+    fieldsCache: {},
+    relationsCache: {},
+    // model label -> verbose name, for the root box's legend.
+    modelVerboseNames: {},
   };
 
   let app, modelSelect, builderRoot, resultsEl, searchBtn;
@@ -15,6 +23,25 @@
   function nextId(prefix) {
     idCounter += 1;
     return `${prefix}-${idCounter}`;
+  }
+
+  function articleFor(word) {
+    return /^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`;
+  }
+
+  function capitalize(word) {
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }
+
+  // Traverse-mode labels are verbs ("lived in"), so "lived in a place"
+  // reads as a sentence on its own. Direct-mode labels ("the subject")
+  // aren't - "the subject a person" isn't grammatical - so they get the
+  // target type parenthesized instead.
+  function describeRelationOption(opt) {
+    if (opt.relation_model === null) {
+      return `${opt.label} (${articleFor(opt.target_verbose_name)})`;
+    }
+    return `${opt.label} ${articleFor(opt.target_verbose_name)}`;
   }
 
   // Negating an entire group is only ever offered on a nested group (see
@@ -45,8 +72,20 @@
     return fieldInfo.lookups.find((l) => l.value === lookupValue) || fieldInfo.lookups[0];
   }
 
-  function newCondition() {
-    const field = state.fields[0];
+  // `ctx` is { model, fields } - which model's fields are in scope here.
+  // Plain conditions/groups all share their parent's ctx; only a relation
+  // node's own_filter/target_filter switch to a different one (see
+  // renderRelation below).
+  function ctxFor(modelLabel) {
+    return { model: modelLabel, fields: state.fieldsCache[modelLabel] || [] };
+  }
+
+  function fieldInfoFor(name, ctx) {
+    return ctx.fields.find((f) => f.name === name) || ctx.fields[0];
+  }
+
+  function newCondition(ctx) {
+    const field = ctx.fields[0];
     const option = field.lookups[0];
     return {
       type: "condition",
@@ -57,16 +96,19 @@
   }
 
   // A group with no conditions has nothing to combine, so every group we
-  // create for the user - the root on model selection, or a nested one from
-  // "+ Add group" - starts with one condition already in it.
-  function newGroupWithCondition() {
+  // create for the user - the root on model selection, a nested one from
+  // "+ Add group", or a relation's target/own filter - starts with one
+  // condition already in it.
+  function newGroupWithCondition(ctx) {
     const group = emptyGroup();
-    group.children.push(newCondition());
+    group.children.push(newCondition(ctx));
     return group;
   }
 
-  function fieldInfoFor(name) {
-    return state.fields.find((f) => f.name === name) || state.fields[0];
+  // A relation node starts with nothing chosen - renderRelation shows a
+  // picker for it until relation_model/direction get set.
+  function newRelationNode() {
+    return { type: "relation", negate: false };
   }
 
   function el(tag, className) {
@@ -84,11 +126,11 @@
   }
 
   // Turns a plain <select> into a type-to-filter combo box, for selects
-  // whose option list can get long (which model, which field) - unlike
-  // the FK/M2M widgets, this has no `ajax` config, so select2 just filters
-  // the options already in the DOM instead of hitting an endpoint. select2
-  // fires the native "change" event on selection either way, so existing
-  // change listeners on the underlying <select> keep working unchanged.
+  // whose option list can get long (which model, which field, which
+  // relation) - unlike the FK/M2M widgets, this has no `ajax` config,
+  // select2 just filters the options already in the DOM instead of
+  // hitting an endpoint. select2 fires the native "change" event on
+  // selection either way, so existing change listeners keep working.
   function makeSearchable(select, select2Options) {
     if (!window.jQuery) return;
     window.jQuery(select).select2(Object.assign({ theme: "bootstrap-5", width: "auto" }, select2Options));
@@ -291,16 +333,16 @@
     return buildScalarInput(fieldInfo, currentValue, onChange);
   }
 
-  function renderCondition(node, container, onRemove) {
+  function renderCondition(node, container, onRemove, ctx) {
     container.innerHTML = "";
     const row = el("div", "d-flex align-items-center gap-2 flex-wrap");
 
-    if (!node.field) node.field = state.fields[0].name;
-    let currentField = fieldInfoFor(node.field);
+    if (!node.field) node.field = ctx.fields[0].name;
+    let currentField = fieldInfoFor(node.field, ctx);
     if (!node.lookup) node.lookup = currentField.lookups[0].value;
 
     const fieldSelect = el("select", "form-select form-select-sm w-auto");
-    state.fields.forEach((f) => {
+    ctx.fields.forEach((f) => {
       const option = el("option");
       option.value = f.name;
       option.textContent = f.label;
@@ -344,7 +386,7 @@
 
     onSelectChange(fieldSelect, () => {
       node.field = fieldSelect.value;
-      currentField = fieldInfoFor(node.field);
+      currentField = fieldInfoFor(node.field, ctx);
       const option = currentField.lookups[0];
       node.lookup = option.value;
       node.value = option.multi ? [] : null;
@@ -369,6 +411,156 @@
     row.append(fieldSelect, lookupSelect, valueContainer, removeBtn);
     container.appendChild(row);
   }
+
+  // --- relation filter -----------------------------------------------
+
+  async function fetchFields(modelLabel) {
+    if (!state.fieldsCache[modelLabel]) {
+      const url = buildUrl(app.dataset.fieldsUrlTemplate, modelLabel);
+      state.fieldsCache[modelLabel] = await fetchJSON(url);
+    }
+    return state.fieldsCache[modelLabel];
+  }
+
+  async function fetchRelationOptions(modelLabel) {
+    if (!state.relationsCache[modelLabel]) {
+      const url = buildUrl(app.dataset.relationsUrlTemplate, modelLabel);
+      state.relationsCache[modelLabel] = await fetchJSON(url);
+    }
+    return state.relationsCache[modelLabel];
+  }
+
+  // Shown while relation_model/direction haven't been chosen yet. A plain
+  // index into the fetched options array is used as the select's value -
+  // simplest way to carry the full option (relation_model/direction/target)
+  // back out without encoding/decoding a composite string.
+  function renderRelationPicker(node, container, onRemove, ctx, rerender) {
+    const row = el("div", "d-flex align-items-center gap-2 flex-wrap");
+    const label = el("span", "small text-muted");
+    label.textContent = "Add a relation filter:";
+
+    const select = el("select", "form-select form-select-sm w-auto");
+    const placeholder = el("option");
+    placeholder.value = "";
+    placeholder.textContent = "Choose…";
+    select.appendChild(placeholder);
+
+    row.append(label, select, button("✕", "btn btn-sm btn-outline-danger", onRemove));
+    container.appendChild(row);
+
+    fetchRelationOptions(ctx.model).then((options) => {
+      options.forEach((opt, index) => {
+        const option = el("option");
+        option.value = String(index);
+        option.textContent = describeRelationOption(opt);
+        select.appendChild(option);
+      });
+      makeSearchable(select, { placeholder: "Choose…" });
+
+      onSelectChange(select, async () => {
+        if (select.value === "") return;
+        const opt = options[Number(select.value)];
+        await fetchFields(opt.target_model);
+        node.relation_model = opt.relation_model;
+        node.direction = opt.direction;
+        node.target_model = opt.target_model;
+        node.label = opt.label;
+        node.targetVerboseName = opt.target_verbose_name;
+        node.target_filter = newGroupWithCondition(ctxFor(opt.target_model));
+        rerender();
+      });
+    });
+  }
+
+  // Shown once relation_model/direction are chosen: a sentence ("has lived
+  // in a Place where: ...") wrapping a nested, fully recursive builder
+  // scoped to the target entity, plus an optional secondary block for the
+  // relation's own fields (only meaningful in traverse mode, i.e. when
+  // relation_model isn't null - in direct mode there's no separate
+  // relation to have "own fields" on, you're already at it).
+  function renderRelationCard(node, container, onRemove, ctx, rerender) {
+    const box = el("div", "card mb-2");
+    const body = el("div", "card-body");
+
+    const header = el("div", "d-flex align-items-center gap-2 flex-wrap mb-2");
+
+    const negateSelect = el("select", "form-select form-select-sm w-auto");
+    [["false", "has"], ["true", "has never"]].forEach(([value, text]) => {
+      const option = el("option");
+      option.value = value;
+      option.textContent = text;
+      if (String(!!node.negate) === value) option.selected = true;
+      negateSelect.appendChild(option);
+    });
+    negateSelect.addEventListener("change", () => {
+      node.negate = negateSelect.value === "true";
+    });
+
+    const sentence = el("span");
+    sentence.textContent = `${describeRelationOption({
+      relation_model: node.relation_model,
+      label: node.label,
+      target_verbose_name: node.targetVerboseName,
+    })} where:`;
+
+    header.append(negateSelect, sentence);
+    header.appendChild(button("Remove relation filter", "btn btn-sm btn-outline-danger ms-auto", onRemove));
+    body.appendChild(header);
+
+    const targetCtx = ctxFor(node.target_model);
+    if (!node.target_filter) node.target_filter = newGroupWithCondition(targetCtx);
+    const targetContainer = el("div");
+    renderGroup(node.target_filter, targetContainer, {
+      isRoot: true,
+      ctx: targetCtx,
+      legend: capitalize(node.targetVerboseName),
+    });
+    body.appendChild(targetContainer);
+
+    if (node.relation_model) {
+      if (node.own_filter) {
+        const ownHeader = el("div", "d-flex align-items-center gap-2 mt-2 mb-1");
+        const ownLabel = el("span", "small text-muted");
+        ownLabel.textContent = "About this relation itself:";
+        const removeOwnBtn = button("✕", "btn btn-sm btn-outline-secondary", () => {
+          node.own_filter = null;
+          rerender();
+        });
+        ownHeader.append(ownLabel, removeOwnBtn);
+        body.appendChild(ownHeader);
+
+        const ownCtx = ctxFor(node.relation_model);
+        const ownContainer = el("div");
+        renderGroup(node.own_filter, ownContainer, { isRoot: true, ctx: ownCtx });
+        body.appendChild(ownContainer);
+      } else {
+        const addOwnFilterBtn = button(
+          "+ Add condition on this relation itself",
+          "btn btn-sm btn-link text-muted mt-1",
+          async () => {
+            await fetchFields(node.relation_model);
+            node.own_filter = newGroupWithCondition(ctxFor(node.relation_model));
+            rerender();
+          }
+        );
+        body.appendChild(addOwnFilterBtn);
+      }
+    }
+
+    box.appendChild(body);
+    container.appendChild(box);
+  }
+
+  function renderRelation(node, container, onRemove, ctx, rerender) {
+    container.innerHTML = "";
+    if (node.relation_model === undefined) {
+      renderRelationPicker(node, container, onRemove, ctx, rerender);
+    } else {
+      renderRelationCard(node, container, onRemove, ctx, rerender);
+    }
+  }
+
+  // --- groups -------------------------------------------------------------
 
   // The inline AND/OR shown between each pair of children. A group has one
   // operator for all its children, so every connector reflects and edits
@@ -398,7 +590,18 @@
     opts = opts || {};
     container.innerHTML = "";
 
-    const box = el("div", opts.isRoot ? "card mb-2 bg-light" : "card mb-2");
+    // `legend` names the model this box's conditions apply to - only
+    // meaningful where that model differs from the surrounding one (a
+    // relation's target_filter), so a plain group never gets one. A
+    // <fieldset>/<legend> is used (rather than a positioned label) so the
+    // model name is also exposed as the group's accessible name, not just
+    // a visual label.
+    const box = el(opts.legend ? "fieldset" : "div", opts.isRoot ? "card mb-2 bg-light" : "card mb-2");
+    if (opts.legend) {
+      const legend = el("legend", "qb-legend");
+      legend.textContent = opts.legend;
+      box.appendChild(legend);
+    }
     const body = el("div", "card-body");
 
     const header = el("div", "d-flex align-items-center gap-2 flex-wrap mb-2");
@@ -424,28 +627,35 @@
         renderGroup(node, container, opts);
       };
       if (child.type === "group") {
-        renderGroup(child, row, { onRemove });
+        renderGroup(child, row, { onRemove, ctx: opts.ctx });
+      } else if (child.type === "relation") {
+        renderRelation(child, row, onRemove, opts.ctx, () => renderGroup(node, container, opts));
       } else {
-        renderCondition(child, row, onRemove);
+        renderCondition(child, row, onRemove, opts.ctx);
       }
       childrenContainer.appendChild(row);
     });
     body.appendChild(childrenContainer);
 
-    // Add-condition/add-group sit after the last condition rather than up in
-    // the header, so they read as "add another one here". Add group is
-    // visually de-emphasized (link style) since nesting groups is a more
-    // advanced move than just adding another condition.
-    const addRow = el("div", "d-flex align-items-center gap-2 mt-2");
+    // Add-condition/add-group/add-relation sit after the last child rather
+    // than up in the header, so they read as "add another one here". Add
+    // group and add relation filter are visually de-emphasized (link
+    // style) since they're both more advanced moves than adding another
+    // plain condition.
+    const addRow = el("div", "d-flex align-items-center gap-2 mt-2 flex-wrap");
     const addConditionBtn = button("+ Add condition", "btn btn-sm btn-outline-primary", () => {
-      node.children.push(newCondition());
+      node.children.push(newCondition(opts.ctx));
       renderGroup(node, container, opts);
     });
     const addGroupBtn = button("+ Add group", "btn btn-sm btn-link text-muted", () => {
-      node.children.push(newGroupWithCondition());
+      node.children.push(newGroupWithCondition(opts.ctx));
       renderGroup(node, container, opts);
     });
-    addRow.append(addConditionBtn, addGroupBtn);
+    const addRelationBtn = button("+ Add relation filter", "btn btn-sm btn-link text-muted", () => {
+      node.children.push(newRelationNode());
+      renderGroup(node, container, opts);
+    });
+    addRow.append(addConditionBtn, addGroupBtn, addRelationBtn);
     body.appendChild(addRow);
 
     box.appendChild(body);
@@ -481,11 +691,15 @@
   async function onModelChange(modelLabel) {
     state.model = modelLabel;
     state.queryUrl = buildUrl(app.dataset.queryUrlTemplate, modelLabel);
-    const fieldsUrl = buildUrl(app.dataset.fieldsUrlTemplate, modelLabel);
 
-    state.fields = await fetchJSON(fieldsUrl);
-    state.tree = newGroupWithCondition();
-    renderGroup(state.tree, builderRoot, { isRoot: true });
+    await fetchFields(modelLabel);
+    const ctx = ctxFor(modelLabel);
+    state.tree = newGroupWithCondition(ctx);
+    renderGroup(state.tree, builderRoot, {
+      isRoot: true,
+      ctx,
+      legend: capitalize(state.modelVerboseNames[modelLabel]),
+    });
     resultsEl.innerHTML = "";
     searchBtn.disabled = false;
   }
@@ -573,6 +787,8 @@
       option.value = model.label;
       option.textContent = model.verbose_name;
       (model.kind === "relation" ? relationGroup : entityGroup).appendChild(option);
+      // Needed later to put a legend on the root box - see onModelChange.
+      state.modelVerboseNames[model.label] = model.verbose_name;
     });
 
     if (entityGroup.children.length) modelSelect.appendChild(entityGroup);

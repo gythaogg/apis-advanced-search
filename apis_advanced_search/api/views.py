@@ -14,6 +14,7 @@ from apis_advanced_search.querybuilder.registry import (
     model_kind,
     resolve_model,
 )
+from apis_advanced_search.querybuilder.relations import relation_options
 from apis_advanced_search.querybuilder.tree import QueryTreeError, empty_group
 
 PAGE_SIZE = 25
@@ -61,6 +62,26 @@ class ModelFieldsView(ModelResolvingAPIView):
     def get(self, request, app_label, model_name):
         fields = [info.to_dict() for info in get_filterable_fields(self.query_model)]
         return Response(fields)
+
+
+class ModelRelationsView(ModelResolvingAPIView):
+    """The relation-traversal options offerable from this model - each
+    naming a relation (or, for a Relation model itself, its fixed
+    subject/object slots) plus the far-side target model, filtered down
+    to what the requesting user may actually view."""
+
+    def get(self, request, app_label, model_name):
+        data = []
+        for option in relation_options(self.query_model):
+            if option["relation_model"] is not None:
+                relation_model = resolve_model(*option["relation_model"].split("."))
+                if relation_model is None or not can_view_model(request, relation_model):
+                    continue
+            target_model = resolve_model(*option["target_model"].split("."))
+            if target_model is None or not can_view_model(request, target_model):
+                continue
+            data.append(option)
+        return Response(data)
 
 
 class ModelQueryView(ModelResolvingAPIView):

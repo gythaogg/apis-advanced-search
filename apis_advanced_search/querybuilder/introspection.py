@@ -25,7 +25,8 @@ from apis_advanced_search.querybuilder.lookups import LOOKUPS_BY_TYPE
 
 # These back the generic FK subj/obj pair on Relation models. Filtering on
 # the raw content-type/object-id is not meaningful to end users - filtering
-# the subject/object entities themselves is the relations filter (M02).
+# the subject/object entities themselves is handled separately, by the
+# relation-traversal filter (see relations.py and compiler.py).
 RELATION_GENERIC_FK_FIELDS = {
     "subj_content_type",
     "subj_object_id",

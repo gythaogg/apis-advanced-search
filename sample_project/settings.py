@@ -16,3 +16,6 @@ ADDITIONAL_APPS = ["sample_project", "apis_advanced_search"]
 for app in ADDITIONAL_APPS:
     if app not in INSTALLED_APPS:
         INSTALLED_APPS.append(app)
+
+
+APIS_ANON_VIEWS_ALLOWED = True

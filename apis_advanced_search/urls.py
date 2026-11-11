@@ -13,6 +13,11 @@ urlpatterns = [
         name="api-model-fields",
     ),
     path(
+        "api/models/<str:app_label>/<str:model_name>/relations/",
+        api_views.ModelRelationsView.as_view(),
+        name="api-model-relations",
+    ),
+    path(
         "api/models/<str:app_label>/<str:model_name>/query/",
         api_views.ModelQueryView.as_view(),
         name="api-model-query",

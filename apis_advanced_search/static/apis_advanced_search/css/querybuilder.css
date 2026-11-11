@@ -1,0 +1,23 @@
+/* Small, deliberate exception to using only Bootstrap utilities: there is
+   no Bootstrap equivalent for a <legend> breaking a card's top border to
+   label what it contains, so this overrides just the handful of
+   properties Bootstrap's reboot resets on <legend> (which otherwise turns
+   it into a full-width heading above the box, not a notch in its border). */
+.qb-legend {
+  float: none;
+  width: auto;
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--bs-secondary-color);
+  /* These boxes are always rendered as the "bg-light" card variant, so the
+     legend's background is hardcoded to match it - var(--bs-card-bg)
+     would not work here, since .bg-light overrides the rendered color
+     without updating that variable. */
+  background-color: var(--bs-light);
+  padding: 0.1rem 0.5rem;
+  margin: 0 0 -0.6rem 0.75rem;
+  position: relative;
+  top: -0.5rem;
+}
