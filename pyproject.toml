@@ -1,0 +1,32 @@
+[project]
+name = "apis-advanced-search"
+version = "0.0.1"
+description = "An intuitive querybuilder intefaces for prosopographical projects built on apis-core-rdf"
+authors = [ { name = "Saranya Balasubramanian" } ]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Framework :: Django",
+    "Operating System :: OS Independent",
+]
+readme = "README.md"
+keywords = ["entities", "relationships", "querybuilder", "prosopographical research"]
+urls = { "Homepage" = "https://github.com/gythaogg/apis-datamodel" }
+requires-python = ">=3.13"
+dependencies = [
+    "apis-core-rdf>=0.74.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "apis-acdhch-default-settings>=2.20.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["sample_project*"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
