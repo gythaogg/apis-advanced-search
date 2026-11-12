@@ -28,4 +28,14 @@ urlpatterns = [
         name="api-model-add-to-collection",
     ),
     path("api/collections/", api_views.CollectionListView.as_view(), name="api-collections"),
+    path(
+        "api/saved-queries/",
+        api_views.SavedQueryListCreateView.as_view(),
+        name="api-saved-queries",
+    ),
+    path(
+        "api/saved-queries/<int:pk>/",
+        api_views.SavedQueryDetailView.as_view(),
+        name="api-saved-query-detail",
+    ),
 ]

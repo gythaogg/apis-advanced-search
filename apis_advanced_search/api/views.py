@@ -19,7 +19,8 @@ from apis_advanced_search.querybuilder.registry import (
     resolve_model,
 )
 from apis_advanced_search.querybuilder.relations import relation_options
-from apis_advanced_search.querybuilder.tree import QueryTreeError, empty_group
+from apis_advanced_search.querybuilder.tree import QueryTreeError, empty_group, validate_node
+from apis_advanced_search.models import SavedQuery
 
 if COLLECTIONS_AVAILABLE:
     from apis_core.collections.models import SkosCollection
@@ -198,3 +199,119 @@ class AddResultsToCollectionView(ModelResolvingAPIView):
                 "added": added,
             }
         )
+
+
+def _serialize_saved_query(query, request):
+    return {
+        "id": query.pk,
+        "name": query.name,
+        "model_label": query.model_label,
+        "is_public": query.is_public,
+        "is_owner": request.user.is_authenticated and query.owner_id == request.user.pk,
+    }
+
+
+class SavedQueryListCreateView(APIView):
+    """List saved queries visible to the requester (their own, plus anyone's
+    public ones) and save new ones. Listing is open to anyone - loading a
+    public query needs no login, same as apis_core's own collections - but
+    saving a new one does, since it needs an owner."""
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
+    def get(self, request):
+        queryset = SavedQuery.objects.filter(is_public=True)
+        if request.user.is_authenticated:
+            queryset = (queryset | SavedQuery.objects.filter(owner=request.user)).distinct()
+        return Response([_serialize_saved_query(q, request) for q in queryset])
+
+    def post(self, request):
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"error": "Name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        model_label = request.data.get("model_label") or ""
+        try:
+            app_label, model_name = model_label.split(".")
+        except ValueError:
+            return Response(
+                {"error": "Invalid model_label."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        model = resolve_model(app_label, model_name)
+        if model is None or not can_view_model(request, model):
+            return Response(
+                {"error": "Unknown or unviewable model."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tree = request.data.get("query") or empty_group()
+        try:
+            validate_node(tree)
+        except QueryTreeError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        query = SavedQuery.objects.create(
+            owner=request.user,
+            name=name,
+            model_label=model_label,
+            tree=tree,
+            is_public=bool(request.data.get("is_public", False)),
+        )
+        return Response(_serialize_saved_query(query, request), status=status.HTTP_201_CREATED)
+
+
+class SavedQueryDetailView(APIView):
+    """Load (anyone, if public or own), rename/toggle public, or delete
+    (owner only) a single saved query. "Not visible to you" and "doesn't
+    exist" are both reported as 404, so a private query's existence isn't
+    revealed to anyone but its owner."""
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def _visible_or_none(self, request, pk):
+        query = SavedQuery.objects.filter(pk=pk).first()
+        if query is None:
+            return None
+        if query.is_public or (request.user.is_authenticated and query.owner_id == request.user.pk):
+            return query
+        return None
+
+    def get(self, request, pk):
+        query = self._visible_or_none(request, pk)
+        if query is None:
+            return Response({"error": "No such saved query."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({**_serialize_saved_query(query, request), "query": query.tree})
+
+    def _owned_or_none(self, request, pk):
+        query = SavedQuery.objects.filter(pk=pk).first()
+        if query is None or query.owner_id != request.user.pk:
+            return None
+        return query
+
+    def patch(self, request, pk):
+        query = self._owned_or_none(request, pk)
+        if query is None:
+            return Response({"error": "No such saved query."}, status=status.HTTP_404_NOT_FOUND)
+        if "name" in request.data:
+            name = (request.data.get("name") or "").strip()
+            if not name:
+                return Response(
+                    {"error": "Name is required."}, status=status.HTTP_400_BAD_REQUEST
+                )
+            query.name = name
+        if "is_public" in request.data:
+            query.is_public = bool(request.data.get("is_public"))
+        query.save()
+        return Response(_serialize_saved_query(query, request))
+
+    def delete(self, request, pk):
+        query = self._owned_or_none(request, pk)
+        if query is None:
+            return Response({"error": "No such saved query."}, status=status.HTTP_404_NOT_FOUND)
+        query.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

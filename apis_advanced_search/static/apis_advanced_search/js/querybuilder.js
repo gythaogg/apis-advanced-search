@@ -26,9 +26,16 @@
     // still in flight when a newer search replaces the results doesn't
     // append its controls into the wrong, already-replaced result set.
     resultsGeneration: 0,
+    // Saved queries the requester can see (their own + public ones),
+    // fetched once and reused - invalidated after saving a new one.
+    savedQueriesCache: null,
+    // Set just before programmatically changing qb-model-select's value
+    // to load a saved query, so the model-select's own change handler
+    // (which otherwise always starts a fresh tree) uses this tree instead.
+    pendingLoadTree: null,
   };
 
-  let app, modelSelect, builderRoot, resultsEl, searchBtn;
+  let app, modelSelect, savedQuerySelect, builderRoot, resultsEl, searchBtn;
   let idCounter = 0;
 
   function nextId(prefix) {
@@ -699,14 +706,44 @@
     return template.replace("__app__", appLabel).replace("__model__", modelName);
   }
 
-  async function onModelChange(modelLabel) {
+  // Walks a (possibly loaded, already fully-built) tree, collecting every
+  // model label whose fields a ctx somewhere in it will need - the root,
+  // plus a relation node's target_model (target_filter's ctx) and, if
+  // present, its relation_model (own_filter's ctx), recursively. Needed
+  // because loading a saved query renders everything synchronously on the
+  // first pass, unlike interactive building where each model's fields get
+  // fetched lazily, one at a time, as the user picks that relation.
+  function collectModelLabels(node, modelLabel, labels) {
+    labels.add(modelLabel);
+    if (node.type === "group") {
+      (node.children || []).forEach((child) => collectModelLabels(child, modelLabel, labels));
+    } else if (node.type === "relation") {
+      if (node.target_model) {
+        if (node.target_filter) collectModelLabels(node.target_filter, node.target_model, labels);
+        else labels.add(node.target_model);
+      }
+      if (node.relation_model) {
+        if (node.own_filter) collectModelLabels(node.own_filter, node.relation_model, labels);
+        else labels.add(node.relation_model);
+      }
+    }
+  }
+
+  async function preloadModelsForTree(tree, rootModelLabel) {
+    const labels = new Set();
+    collectModelLabels(tree, rootModelLabel, labels);
+    await Promise.all([...labels].map((label) => fetchFields(label)));
+  }
+
+  async function onModelChange(modelLabel, presetTree) {
     state.model = modelLabel;
     state.queryUrl = buildUrl(app.dataset.queryUrlTemplate, modelLabel);
     state.addToCollectionUrl = buildUrl(app.dataset.addToCollectionUrlTemplate, modelLabel);
 
     await fetchFields(modelLabel);
+    if (presetTree) await preloadModelsForTree(presetTree, modelLabel);
     const ctx = ctxFor(modelLabel);
-    state.tree = newGroupWithCondition(ctx);
+    state.tree = presetTree || newGroupWithCondition(ctx);
     renderGroup(state.tree, builderRoot, {
       isRoot: true,
       ctx,
@@ -714,6 +751,114 @@
     });
     resultsEl.innerHTML = "";
     searchBtn.disabled = false;
+    renderSaveQueryControls();
+  }
+
+  // --- saved queries --------------------------------------------------
+
+  async function fetchSavedQueries() {
+    if (!state.savedQueriesCache) {
+      state.savedQueriesCache = await fetchJSON(app.dataset.savedQueriesUrl);
+    }
+    return state.savedQueriesCache;
+  }
+
+  async function populateSavedQueriesSelect() {
+    if (!savedQuerySelect) return;
+    const queries = await fetchSavedQueries();
+    savedQuerySelect.innerHTML = "";
+
+    const placeholder = el("option");
+    placeholder.value = "";
+    placeholder.textContent = "Load saved search…";
+    savedQuerySelect.appendChild(placeholder);
+
+    const mineGroup = el("optgroup");
+    mineGroup.label = "Mine";
+    const publicGroup = el("optgroup");
+    publicGroup.label = "Public";
+
+    queries.forEach((q) => {
+      const option = el("option");
+      option.value = String(q.id);
+      option.textContent = q.name;
+      (q.is_owner ? mineGroup : publicGroup).appendChild(option);
+    });
+
+    if (mineGroup.children.length) savedQuerySelect.appendChild(mineGroup);
+    if (publicGroup.children.length) savedQuerySelect.appendChild(publicGroup);
+  }
+
+  async function loadSavedQuery(id) {
+    const data = await fetchJSON(`${app.dataset.savedQueriesUrl}${id}/`);
+    state.pendingLoadTree = data.query;
+    if (window.jQuery) {
+      window.jQuery(modelSelect).val(data.model_label).trigger("change");
+    } else {
+      modelSelect.value = data.model_label;
+      onModelChange(data.model_label, data.query);
+    }
+  }
+
+  // Only offered to logged-in users, same as collections - saving needs an
+  // owner. Rebuilt on every model change since state.model/state.tree are
+  // what gets saved, and there's nothing to save before a model is picked.
+  function renderSaveQueryControls() {
+    const container = document.getElementById("qb-save-query-controls");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!state.isAuthenticated) return;
+
+    const row = el("div", "d-flex align-items-center gap-2 flex-wrap");
+
+    const nameInput = el("input", "form-control form-control-sm w-auto");
+    nameInput.type = "text";
+    nameInput.placeholder = "Query name";
+
+    const publicWrap = el("div", "form-check form-check-inline mb-0");
+    const publicCheckbox = el("input", "form-check-input");
+    publicCheckbox.type = "checkbox";
+    const publicId = nextId("qb-save-public");
+    publicCheckbox.id = publicId;
+    const publicLabel = el("label", "form-check-label small");
+    publicLabel.setAttribute("for", publicId);
+    publicLabel.textContent = "Public";
+    publicWrap.append(publicCheckbox, publicLabel);
+
+    const status = el("span", "small text-muted");
+
+    const saveBtn = button("Save query", "btn btn-sm btn-outline-secondary", async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        status.textContent = "Enter a name.";
+        status.className = "small text-danger";
+        return;
+      }
+      status.textContent = "Saving…";
+      status.className = "small text-muted";
+      try {
+        await fetchJSON(app.dataset.savedQueriesUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": state.csrfToken },
+          body: JSON.stringify({
+            name,
+            model_label: state.model,
+            query: state.tree,
+            is_public: publicCheckbox.checked,
+          }),
+        });
+        status.textContent = "Saved.";
+        status.className = "small text-success";
+        state.savedQueriesCache = null;
+        await populateSavedQueriesSelect();
+      } catch (err) {
+        status.textContent = err.message;
+        status.className = "small text-danger";
+      }
+    });
+
+    row.append(nameInput, publicWrap, saveBtn, status);
+    container.appendChild(row);
   }
 
   const NEW_COLLECTION_VALUE = "__new__";
@@ -924,6 +1069,7 @@
     state.isAuthenticated = app.dataset.isAuthenticated === "true";
     state.collectionsEnabled = app.dataset.collectionsEnabled === "true";
     modelSelect = document.getElementById("qb-model-select");
+    savedQuerySelect = document.getElementById("qb-load-saved-select");
     builderRoot = document.getElementById("qb-builder-root");
     resultsEl = document.getElementById("qb-results");
     searchBtn = document.getElementById("qb-search-btn");
@@ -931,10 +1077,17 @@
 
     onSelectChange(modelSelect, () => {
       if (!modelSelect.value) return;
-      onModelChange(modelSelect.value);
+      const presetTree = state.pendingLoadTree;
+      state.pendingLoadTree = null;
+      onModelChange(modelSelect.value, presetTree);
+    });
+    onSelectChange(savedQuerySelect, () => {
+      if (!savedQuerySelect.value) return;
+      loadSavedQuery(Number(savedQuerySelect.value));
     });
     searchBtn.addEventListener("click", () => runSearch(1));
 
     loadModels();
+    populateSavedQueriesSelect();
   });
 })();
