@@ -503,7 +503,7 @@
     const header = el("div", "d-flex align-items-center gap-2 flex-wrap mb-2");
 
     const negateSelect = el("select", "form-select form-select-sm w-auto");
-    [["false", "has"], ["true", "has never"]].forEach(([value, text]) => {
+    [["false", "has relation"], ["true", "does not have relation"]].forEach(([value, text]) => {
       const option = el("option");
       option.value = value;
       option.textContent = text;
@@ -515,11 +515,13 @@
     });
 
     const sentence = el("span");
-    sentence.textContent = `${describeRelationOption({
-      relation_model: node.relation_model,
-      label: node.label,
-      target_verbose_name: node.targetVerboseName,
-    })} where:`;
+    const relationLabel = el("em");
+    relationLabel.textContent = node.label;
+    const article = articleFor(node.targetVerboseName);
+    const rest = document.createTextNode(
+      node.relation_model === null ? ` (${article}) where:` : ` ${article} where:`
+    );
+    sentence.append(relationLabel, rest);
 
     header.append(negateSelect, sentence);
     header.appendChild(button("Remove relation filter", "btn btn-sm btn-outline-danger ms-auto", onRemove));
