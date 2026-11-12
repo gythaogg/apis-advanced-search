@@ -33,6 +33,8 @@ In case of trouble, compare your APIS instance with the sample_project APIS inst
 ## Settings
 `APIS_ANON_VIEWS_ALLOWED` from `apis-core-rdf` is used to determine if the results can be shown to anonymous users.
 
+If `apis_core.collections` is not included in `INSTALLED_APPS`, it will not be possible to add search results to a collection. A warning will be logged when the server starts.
+
 ## Why
 
 The generic list views allow searching across multiple fields of a single model, but only using AND conditions. They do not support checking for empty values or more precise matching, such as exact matches or values starting with a particular string. Searching across related models is also limited, making it difficult to specify precise criteria for the attributes of subject and object models.
