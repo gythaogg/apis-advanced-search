@@ -17,7 +17,11 @@
        data-models-url="{% url 'apis_advanced_search:api-models' %}"
        data-fields-url-template="{% url 'apis_advanced_search:api-model-fields' app_label='__app__' model_name='__model__' %}"
        data-relations-url-template="{% url 'apis_advanced_search:api-model-relations' app_label='__app__' model_name='__model__' %}"
-       data-query-url-template="{% url 'apis_advanced_search:api-model-query' app_label='__app__' model_name='__model__' %}">
+       data-query-url-template="{% url 'apis_advanced_search:api-model-query' app_label='__app__' model_name='__model__' %}"
+       data-add-to-collection-url-template="{% url 'apis_advanced_search:api-model-add-to-collection' app_label='__app__' model_name='__model__' %}"
+       data-collections-url="{% url 'apis_advanced_search:api-collections' %}"
+       data-is-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}"
+       data-collections-enabled="{{ collections_enabled|yesno:'true,false' }}">
 
     <div class="row mt-3">
       <div class="col-12 col-xl-9 mx-auto">

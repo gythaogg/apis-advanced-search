@@ -22,4 +22,10 @@ urlpatterns = [
         api_views.ModelQueryView.as_view(),
         name="api-model-query",
     ),
+    path(
+        "api/models/<str:app_label>/<str:model_name>/add-to-collection/",
+        api_views.AddResultsToCollectionView.as_view(),
+        name="api-model-add-to-collection",
+    ),
+    path("api/collections/", api_views.CollectionListView.as_view(), name="api-collections"),
 ]

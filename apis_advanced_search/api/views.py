@@ -2,11 +2,15 @@ from django.contrib.contenttypes.models import ContentType
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apis_advanced_search.api.permissions import can_view_model
+from apis_advanced_search.querybuilder.collections import (
+    COLLECTIONS_AVAILABLE,
+    bulk_add_to_collection,
+)
 from apis_advanced_search.querybuilder.compiler import QueryCompileError, build_queryset
 from apis_advanced_search.querybuilder.introspection import get_filterable_fields
 from apis_advanced_search.querybuilder.registry import (
@@ -16,6 +20,9 @@ from apis_advanced_search.querybuilder.registry import (
 )
 from apis_advanced_search.querybuilder.relations import relation_options
 from apis_advanced_search.querybuilder.tree import QueryTreeError, empty_group
+
+if COLLECTIONS_AVAILABLE:
+    from apis_core.collections.models import SkosCollection
 
 PAGE_SIZE = 25
 
@@ -114,5 +121,80 @@ class ModelQueryView(ModelResolvingAPIView):
                 "page": page,
                 "page_size": PAGE_SIZE,
                 "results": results,
+            }
+        )
+
+
+class CollectionListView(APIView):
+    """Existing collections to offer in the "add results to a collection"
+    picker. Listing names isn't sensitive, so unlike actually adding to one,
+    this doesn't require login."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not COLLECTIONS_AVAILABLE:
+            return Response(
+                {"error": "Collections are not enabled on this instance."},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+        collections = SkosCollection.objects.order_by("name")
+        return Response([{"id": c.pk, "name": c.name} for c in collections])
+
+
+class AddResultsToCollectionView(ModelResolvingAPIView):
+    """Bulk-add every object currently matching a query tree to a SKOS
+    collection - an existing one (`collection_id`) or a new one
+    (`collection_name`). Requires login, same as apis_core's own collection
+    views."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, app_label, model_name):
+        if not COLLECTIONS_AVAILABLE:
+            return Response(
+                {"error": "Collections are not enabled on this instance."},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+        tree = request.data.get("query") or empty_group()
+        try:
+            queryset = build_queryset(self.query_model, tree)
+        except (QueryTreeError, QueryCompileError) as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        collection_id = request.data.get("collection_id")
+        collection_name = (request.data.get("collection_name") or "").strip()
+
+        if collection_id:
+            collection = SkosCollection.objects.filter(pk=collection_id).first()
+            if collection is None:
+                return Response(
+                    {"error": "No such collection"}, status=status.HTTP_404_NOT_FOUND
+                )
+        elif collection_name:
+            collection = SkosCollection.objects.create(
+                name=collection_name, creator=request.user.get_username()
+            )
+        else:
+            return Response(
+                {"error": "Provide collection_id or collection_name"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pks = list(queryset.values_list("pk", flat=True))
+        added = bulk_add_to_collection(collection, self.query_model, pks)
+
+        collection_ct = ContentType.objects.get_for_model(SkosCollection)
+        return Response(
+            {
+                "collection": {
+                    "id": collection.pk,
+                    "name": collection.name,
+                    "url": reverse(
+                        "apis_core:generic:detail", args=[collection_ct, collection.pk]
+                    ),
+                },
+                "matched": len(pks),
+                "added": added,
             }
         )

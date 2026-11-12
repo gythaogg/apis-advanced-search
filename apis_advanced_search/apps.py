@@ -1,5 +1,4 @@
 from django.apps import AppConfig
-from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.urls import get_resolver
 
@@ -9,6 +8,8 @@ class APISAdvancedSearchConfig(AppConfig):
     verbose_name = "APIS Advanced Search"
 
     def ready(self):
+        from apis_advanced_search import checks  # noqa: F401 - registers system checks
+
         resolver = get_resolver()
 
         def has_package_urls(patterns):

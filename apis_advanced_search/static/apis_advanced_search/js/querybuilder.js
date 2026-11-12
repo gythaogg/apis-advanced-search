@@ -15,6 +15,17 @@
     relationsCache: {},
     // model label -> verbose name, for the root box's legend.
     modelVerboseNames: {},
+    isAuthenticated: false,
+    collectionsEnabled: false,
+    collectionsUrl: null,
+    addToCollectionUrl: null,
+    // Existing collections, fetched once and reused across searches -
+    // invalidated (see renderCollectionControls) after creating a new one.
+    collectionsCache: null,
+    // Bumped on every renderResults call, so a collections fetch that's
+    // still in flight when a newer search replaces the results doesn't
+    // append its controls into the wrong, already-replaced result set.
+    resultsGeneration: 0,
   };
 
   let app, modelSelect, builderRoot, resultsEl, searchBtn;
@@ -691,6 +702,7 @@
   async function onModelChange(modelLabel) {
     state.model = modelLabel;
     state.queryUrl = buildUrl(app.dataset.queryUrlTemplate, modelLabel);
+    state.addToCollectionUrl = buildUrl(app.dataset.addToCollectionUrlTemplate, modelLabel);
 
     await fetchFields(modelLabel);
     const ctx = ctxFor(modelLabel);
@@ -704,12 +716,108 @@
     searchBtn.disabled = false;
   }
 
+  const NEW_COLLECTION_VALUE = "__new__";
+
+  async function fetchCollections() {
+    if (!state.collectionsCache) {
+      state.collectionsCache = await fetchJSON(state.collectionsUrl);
+    }
+    return state.collectionsCache;
+  }
+
+  // Lets the user freeze the current (full, unpaginated) result set into an
+  // apis_core SKOS collection - either an existing one or a newly-named one.
+  // Only offered to logged-in users, since adding to a collection requires
+  // login on the apis_core side too.
+  async function renderCollectionControls(container, generation) {
+    const collections = await fetchCollections();
+    // A newer search may have already replaced `container`'s contents by
+    // the time this fetch resolves - don't append into a stale result set.
+    if (generation !== state.resultsGeneration) return;
+
+    const wrap = el("div", "d-flex align-items-center gap-2 flex-wrap");
+
+    const select = el("select", "form-select form-select-sm w-auto");
+    const placeholder = el("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select collection…";
+    select.appendChild(placeholder);
+    collections.forEach((collection) => {
+      const option = el("option");
+      option.value = String(collection.id);
+      option.textContent = collection.name;
+      select.appendChild(option);
+    });
+    const newOption = el("option");
+    newOption.value = NEW_COLLECTION_VALUE;
+    newOption.textContent = "+ New collection…";
+    select.appendChild(newOption);
+
+    const nameInput = el("input", "form-control form-control-sm w-auto");
+    nameInput.type = "text";
+    nameInput.placeholder = "New collection name";
+    nameInput.style.display = select.value === NEW_COLLECTION_VALUE ? "" : "none";
+    onSelectChange(select, () => {
+      nameInput.style.display = select.value === NEW_COLLECTION_VALUE ? "" : "none";
+    });
+
+    const status = el("span", "small text-muted");
+
+    const addBtn = button("Add all to collection", "btn btn-sm btn-outline-secondary", async () => {
+      const body = { query: state.tree };
+      if (select.value === "") {
+        status.textContent = "Select a collection first.";
+        status.className = "small text-danger";
+        return;
+      } else if (select.value === NEW_COLLECTION_VALUE) {
+        body.collection_name = nameInput.value.trim();
+        if (!body.collection_name) {
+          status.textContent = "Enter a name for the new collection.";
+          status.className = "small text-danger";
+          return;
+        }
+      } else {
+        body.collection_id = select.value;
+      }
+      status.textContent = "Adding…";
+      status.className = "small text-muted";
+      try {
+        const result = await fetchJSON(state.addToCollectionUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": state.csrfToken },
+          body: JSON.stringify(body),
+        });
+        state.collectionsCache = null; // a new collection may have been created
+        const skipped = result.matched - result.added;
+        status.innerHTML =
+          `Added ${result.added} of ${result.matched} result${result.matched === 1 ? "" : "s"}` +
+          (skipped ? ` (${skipped} already in it)` : "") +
+          ` to <a href="${result.collection.url}">${escapeHtml(result.collection.name)}</a>.`;
+        status.className = "small text-success";
+      } catch (err) {
+        status.textContent = err.message;
+        status.className = "small text-danger";
+      }
+    });
+
+    wrap.append(select, nameInput, addBtn, status);
+    container.appendChild(wrap);
+  }
+
   function renderResults(data, page) {
+    state.resultsGeneration += 1;
+    const generation = state.resultsGeneration;
     resultsEl.innerHTML = "";
 
-    const summary = el("p");
+    const header = el("div", "d-flex align-items-center gap-3 flex-wrap mb-2");
+    const summary = el("span");
     summary.textContent = `${data.count} result${data.count === 1 ? "" : "s"}`;
-    resultsEl.appendChild(summary);
+    header.appendChild(summary);
+    resultsEl.appendChild(header);
+
+    if (data.count > 0 && state.isAuthenticated && state.collectionsEnabled) {
+      renderCollectionControls(header, generation);
+    }
 
     if (data.results.length) {
       const table = el("table", "table table-sm table-striped");
@@ -812,6 +920,9 @@
     if (!app) return;
 
     state.csrfToken = app.dataset.csrfToken;
+    state.collectionsUrl = app.dataset.collectionsUrl;
+    state.isAuthenticated = app.dataset.isAuthenticated === "true";
+    state.collectionsEnabled = app.dataset.collectionsEnabled === "true";
     modelSelect = document.getElementById("qb-model-select");
     builderRoot = document.getElementById("qb-builder-root");
     resultsEl = document.getElementById("qb-results");
