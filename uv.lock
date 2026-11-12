@@ -87,7 +87,7 @@ wheels = [
 
 [[package]]
 name = "apis-advanced-search"
-version = "0.0.3"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "apis-core-rdf" },
@@ -101,7 +101,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "apis-acdhch-default-settings", marker = "extra == 'dev'", specifier = ">=2.20.0" },
-    { name = "apis-core-rdf", specifier = ">=0.74.0" },
+    { name = "apis-core-rdf", specifier = ">=0.68.1" },
 ]
 provides-extras = ["dev"]
 
