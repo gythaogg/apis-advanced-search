@@ -21,3 +21,11 @@
   position: relative;
   top: -0.5rem;
 }
+
+/* Bootstrap has no min-width utilities. Without this, the value widget of
+   a multi-value condition sizes to its (initially empty) content and only
+   widens once a value is added. Growing into the free space is handled by
+   the flex-grow-1 utility in the JS. */
+.qb-value-cell {
+  min-width: 12rem;
+}

@@ -227,36 +227,44 @@
   }
 
   // Multi-value chip list for plain (non-relational) fields: existing
-  // values shown as removable chips, plus one small entry field that
-  // commits on Enter or "+ Add value" rather than on every keystroke -
+  // values shown as removable chips, plus one entry field that commits on
+  // Enter or when it loses focus rather than on every keystroke -
   // unlike the scalar widget, a half-typed value shouldn't become a chip.
   function buildChipListInput(fieldInfo, currentValues, onChange) {
-    const wrap = el("div", "d-flex align-items-center gap-2 flex-wrap");
+    // The chips and the entry field sit inside one box that looks like a
+    // form control, the same way select2's multi-select does.
+    const box = el("div", "form-control form-control-sm h-auto d-flex flex-wrap align-items-center gap-1 w-100");
     const values = Array.isArray(currentValues) ? currentValues.slice() : [];
 
-    const chipsEl = el("span", "d-flex align-items-center gap-1 flex-wrap");
+    const chipsEl = el("span", "d-flex flex-wrap align-items-center gap-1");
 
     function renderChips() {
       chipsEl.innerHTML = "";
       values.forEach((value, index) => {
-        const chip = el("span", "badge rounded-pill text-bg-secondary d-flex align-items-center gap-1");
-        chip.textContent = value;
-        const removeBtn = el("button", "btn-close btn-close-white");
+        // Same look as select2's multi-select pills: outlined, no fill,
+        // with the clear control on the left.
+        const chip = el("span", "d-inline-flex align-items-center gap-2 border rounded px-2 py-1 my-1");
+        const removeBtn = el("button", "btn-close small");
         removeBtn.type = "button";
-        removeBtn.style.fontSize = "0.55em";
         removeBtn.setAttribute("aria-label", "Remove value");
         removeBtn.addEventListener("click", () => {
           values.splice(index, 1);
           renderChips();
           onChange(values.slice());
         });
-        chip.append(removeBtn);
+        chip.append(removeBtn, document.createTextNode(value));
         chipsEl.appendChild(chip);
       });
     }
     renderChips();
 
+    // Borderless and transparent so it reads as part of the box around it.
     const entry = scalarInputElement(fieldInfo);
+    entry.classList.replace("w-auto", "flex-grow-1");
+    entry.classList.add("border-0", "shadow-none", "bg-transparent", "p-0");
+    box.addEventListener("click", (e) => {
+      if (e.target === box || e.target === chipsEl) entry.focus();
+    });
 
     function commitEntry() {
       const value = readScalarInputValue(fieldInfo, entry);
@@ -280,10 +288,8 @@
     // value the user never explicitly "added".
     entry.addEventListener("blur", commitEntry);
 
-    const addBtn = button("+ Add value", "btn btn-sm btn-outline-secondary", commitEntry);
-
-    wrap.append(chipsEl, entry, addBtn);
-    return wrap;
+    box.append(chipsEl, entry);
+    return box;
   }
 
   // FK/M2M widget: select2 reusing apis_core's own autocomplete endpoint.
@@ -325,6 +331,16 @@
           processResults: (data) => data,
         },
       });
+      if (multiple) {
+        // select2 sizes its search input inline, so it clips the placeholder
+        // and any typed text. Laying the selection row out as flex lets the
+        // search field take the free space beside the chips; w-100 is
+        // !important, so it also overrides select2's inline width.
+        const rendered = $select.next(".select2-container").find(".select2-selection__rendered");
+        rendered.addClass("d-flex flex-wrap align-items-center");
+        rendered.find(".select2-search--inline").addClass("flex-grow-1");
+        rendered.find(".select2-search__field").addClass("w-100");
+      }
       // select2's own "data" always reflects the full current selection,
       // for both single and multi mode, so one "change" handler covers
       // picking, removing a chip, and clearing.
@@ -388,9 +404,14 @@
 
     function renderValueWidget() {
       valueContainer.innerHTML = "";
+      const option = lookupOptionFor(currentField, node.lookup);
+      // Multi-value widgets (chips / select2 multi) get a wide cell so they
+      // don't start at the width of their empty content.
+      const isMultiWidget = currentField.type === "fk" || currentField.type === "m2m" || option.multi;
+      valueContainer.classList.toggle("qb-value-cell", isMultiWidget);
+      valueContainer.classList.toggle("flex-grow-1", isMultiWidget);
       // "empty" / "not_empty" have no value to enter at all.
       if (node.lookup === "empty" || node.lookup === "not_empty") return;
-      const option = lookupOptionFor(currentField, node.lookup);
       valueContainer.appendChild(
         buildValueInput(currentField, option, node.value, node.valueLabel, (val, label) => {
           node.value = val;
@@ -618,7 +639,7 @@
     // a visual label.
     const box = el(opts.legend ? "fieldset" : "div", opts.isRoot ? "card mb-2 bg-light" : "card mb-2");
     if (opts.legend) {
-      const legend = el("legend", "qb-legend");
+      const legend = el("legend", "qb-legend text-uppercase");
       legend.textContent = opts.legend;
       box.appendChild(legend);
     }
