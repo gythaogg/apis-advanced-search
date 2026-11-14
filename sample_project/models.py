@@ -11,6 +11,13 @@ class Profession(SimpleLabelModel):
 
 class Person(E21_Person):
     profession = models.ManyToManyField(Profession, blank=True, related_name="persons")
+    place_of_birth = models.ForeignKey(
+        "Place",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="people_born_here",
+    )
 
 
 class Place(E53_Place):

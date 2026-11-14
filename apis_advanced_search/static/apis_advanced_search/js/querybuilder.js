@@ -1010,8 +1010,21 @@
     return availableColumns().find((col) => col.name === name);
   }
 
+  // Foreign-key and many-to-many values are only fetched for shown columns.
+  // Adding one that hasn't been loaded for the current page means fetching
+  // that page again; everything else is redrawn from the data already here.
   function setVisibleColumns(names) {
+    const added = names.filter((name) => !state.visibleColumns.includes(name));
+    const loaded = state.lastResults ? state.lastResults.data.loaded_columns || [] : [];
+    const needsFetch = added.some((name) => {
+      const col = columnInfo(name);
+      return col && col.on_demand && !loaded.includes(name);
+    });
     state.visibleColumns = names;
+    if (needsFetch && state.lastResults) {
+      runSearch(state.lastResults.page);
+      return;
+    }
     renderColumnPanel();
     renderTable();
   }
@@ -1162,15 +1175,19 @@
 
     columns.forEach((col) => {
       const th = el("th");
-      const sortBtn = button(
-        capitalize(col.label) + sortIndicator(col.name),
-        "btn btn-link btn-sm p-0 text-reset text-decoration-none fw-semibold text-nowrap",
-        () => toggleSort(col.name)
-      );
-      if (state.sort && state.sort.field === col.name) {
-        th.setAttribute("aria-sort", state.sort.direction === "desc" ? "descending" : "ascending");
+      if (col.sortable) {
+        const sortBtn = button(
+          capitalize(col.label) + sortIndicator(col.name),
+          "btn btn-link btn-sm p-0 text-reset text-decoration-none fw-semibold text-nowrap",
+          () => toggleSort(col.name)
+        );
+        if (state.sort && state.sort.field === col.name) {
+          th.setAttribute("aria-sort", state.sort.direction === "desc" ? "descending" : "ascending");
+        }
+        th.appendChild(sortBtn);
+      } else {
+        th.textContent = capitalize(col.label);
       }
-      th.appendChild(sortBtn);
       headRow.appendChild(th);
     });
     thead.appendChild(headRow);
@@ -1258,7 +1275,12 @@
           "Content-Type": "application/json",
           "X-CSRFToken": state.csrfToken,
         },
-        body: JSON.stringify({ query: state.tree, page: page, sort: state.sort }),
+        body: JSON.stringify({
+          query: state.tree,
+          page: page,
+          sort: state.sort,
+          columns: state.visibleColumns,
+        }),
       });
       renderResults(data, page);
     } catch (err) {

@@ -21,11 +21,11 @@ def check_collections_app_installed(app_configs, **kwargs):
 @register()
 def check_result_columns_setting(app_configs, **kwargs):
     """Every entry in APIS_ADVANCED_SEARCH_COLUMNS must name a registered
-    model and native fields of it. Anything else would silently show no
+    model and fields of it. Anything else would silently show no
     column, so it is reported here instead."""
     from apis_advanced_search.querybuilder.columns import (
         configured_columns,
-        native_column_map,
+        own_column_map,
     )
     from apis_advanced_search.querybuilder.registry import resolve_model
 
@@ -58,13 +58,13 @@ def check_result_columns_setting(app_configs, **kwargs):
                 )
             )
             continue
-        available = native_column_map(model)
+        available = own_column_map(model)
         for name in names:
             if name not in available:
                 problems.append(
                     Warning(
-                        f"APIS_ADVANCED_SEARCH_COLUMNS: {name!r} is not a native field of {label!r}.",
-                        hint="Only the model's own non-relational fields can be columns in this version.",
+                        f"APIS_ADVANCED_SEARCH_COLUMNS: {name!r} is not a field of {label!r}.",
+                        hint="Only the model's own fields can be columns in this version.",
                         id="apis_advanced_search.W002",
                     )
                 )
