@@ -80,12 +80,10 @@ class ColumnInfo:
 
 def own_columns(model) -> list[ColumnInfo]:
     """The model's own fields that can be shown as columns, in declaration
-    order. The primary key is left out: the label column already links to
-    the object. The primary key is still used as the final sort key."""
+    order. The primary key is included, so users can see record IDs; the
+    label column still links to the object."""
     columns = []
     for field in list(model._meta.fields) + list(model._meta.many_to_many):
-        if field.primary_key:
-            continue
         # One-to-one parent links (multi-table inheritance) are structure,
         # not a value a user would look at.
         remote_field = getattr(field, "remote_field", None)
