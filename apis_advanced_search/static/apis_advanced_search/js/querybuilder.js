@@ -44,6 +44,8 @@
     lastResults: null,
     columnPanelOpen: false,
     columnSearch: "",
+    // Relation and model sections the user has opened in the picker.
+    openColumnGroups: new Set(["__model__"]),
   };
 
   let app, modelSelect, savedQuerySelect, builderRoot, resultsEl, searchBtn;
@@ -1130,22 +1132,57 @@
     });
     controls.append(search, resetBtn);
 
-    const sectionHeading = el("div", "small fw-semibold mb-1");
-    const list = el("div", "row row-cols-2 row-cols-lg-4 g-1");
+    // One collapsible section for the model's own fields, then one per
+    // relation. Sections keep their open/closed state across redraws, so
+    // ticking several fields in a row doesn't keep collapsing the section.
+    const sections = el("div", "d-flex flex-column gap-2");
+    const ownKey = "__model__";
 
     const drawList = () => {
-      list.innerHTML = "";
+      sections.innerHTML = "";
       const query = state.columnSearch.trim().toLowerCase();
+      const ownTitle = capitalize(state.modelVerboseNames[state.model] || "");
+
+      const groups = [];
       available.forEach((col) => {
-        const selected = state.visibleColumns.includes(col.name);
-        if (query && !col.label.toLowerCase().includes(query)) return;
-        const cell = el("div", "col");
-        cell.appendChild(columnCheckbox(col, selected));
-        list.appendChild(cell);
+        const key = col.group || ownKey;
+        let group = groups.find((g) => g.key === key);
+        if (!group) {
+          group = { key, title: col.group ? col.group_title : ownTitle, columns: [] };
+          groups.push(group);
+        }
+        group.columns.push(col);
       });
-      const shown = state.visibleColumns.filter((name) => columnInfo(name)).length;
-      sectionHeading.textContent =
-        `${capitalize(state.modelVerboseNames[state.model] || "")} fields (${shown} of ${available.length} shown)`;
+
+      groups.forEach((group) => {
+        const matching = group.columns.filter(
+          (col) => !query || col.label.toLowerCase().includes(query)
+        );
+        // While searching, a section with nothing matching is left out.
+        if (query && !matching.length) return;
+
+        const details = el("details", "qb-column-group");
+        details.open = !!query || state.openColumnGroups.has(group.key);
+        details.addEventListener("toggle", () => {
+          // Sections opened just to show search results aren't remembered.
+          if (state.columnSearch.trim()) return;
+          if (details.open) state.openColumnGroups.add(group.key);
+          else state.openColumnGroups.delete(group.key);
+        });
+
+        const summary = el("summary", "small fw-semibold");
+        const shown = group.columns.filter((col) => state.visibleColumns.includes(col.name)).length;
+        summary.textContent = `${capitalize(group.title)} (${shown} of ${group.columns.length} shown)`;
+
+        const list = el("div", "row row-cols-2 row-cols-lg-4 g-1 mt-1");
+        matching.forEach((col) => {
+          const cell = el("div", "col");
+          cell.appendChild(columnCheckbox(col, state.visibleColumns.includes(col.name)));
+          list.appendChild(cell);
+        });
+        details.append(summary, list);
+        sections.appendChild(details);
+      });
     };
     search.addEventListener("input", () => {
       state.columnSearch = search.value;
@@ -1153,7 +1190,7 @@
     });
     drawList();
 
-    panel.append(chipsHeading, chips, controls, sectionHeading, list);
+    panel.append(chipsHeading, chips, controls, sections);
     columnPanelEl.appendChild(panel);
   }
 

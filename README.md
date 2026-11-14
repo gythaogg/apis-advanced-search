@@ -37,9 +37,12 @@ In case of trouble, compare your APIS instance with the sample_project APIS inst
 
 ```python
 APIS_ADVANCED_SEARCH_COLUMNS = {
-    "sample_project.person": ["date_of_birth", "date_of_death", "gender"],
+    "sample_project.person": ["date_of_birth", "place_of_bairth", "sample_project.personlivedinplace:obj.label"],
+    "sample_project.place": ["label", "sample_project.personlivedinplace:subj"],
     }
 ```
+
+Relation columns are named after the relation and the side the related object is on. `"sample_project.personlivedinplace:obj"` shows the related place, and `"sample_project.personlivedinplace:obj.latitude"` shows the latitude.
 
 If `apis_core.collections` is not included in `INSTALLED_APPS`, it will not be possible to add search results to a collection. A warning will be logged when the server starts.
 

@@ -23,11 +23,9 @@ def check_result_columns_setting(app_configs, **kwargs):
     """Every entry in APIS_ADVANCED_SEARCH_COLUMNS must name a registered
     model and fields of it. Anything else would silently show no
     column, so it is reported here instead."""
-    from apis_advanced_search.querybuilder.columns import (
-        configured_columns,
-        own_column_map,
-    )
+    from apis_advanced_search.querybuilder.columns import configured_columns
     from apis_advanced_search.querybuilder.registry import resolve_model
+    from apis_advanced_search.querybuilder.relation_columns import all_columns
 
     config = configured_columns()
     if not isinstance(config, dict):
@@ -58,13 +56,13 @@ def check_result_columns_setting(app_configs, **kwargs):
                 )
             )
             continue
-        available = own_column_map(model)
+        available = all_columns(model)
         for name in names:
             if name not in available:
                 problems.append(
                     Warning(
                         f"APIS_ADVANCED_SEARCH_COLUMNS: {name!r} is not a field of {label!r}.",
-                        hint="Only the model's own fields can be columns in this version.",
+                        hint="Use a field of the model, or a relation of it written as in the README.",
                         id="apis_advanced_search.W002",
                     )
                 )

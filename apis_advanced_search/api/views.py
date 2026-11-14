@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apis_advanced_search.api.permissions import can_view_model
+from apis_advanced_search.models import SavedQuery
 from apis_advanced_search.querybuilder.collections import (
     COLLECTIONS_AVAILABLE,
     bulk_add_to_collection,
@@ -15,8 +16,6 @@ from apis_advanced_search.querybuilder.columns import (
     apply_ordering,
     default_column_names,
     load_relations,
-    own_column_map,
-    own_columns,
     requested_columns,
     row_values,
 )
@@ -27,9 +26,17 @@ from apis_advanced_search.querybuilder.registry import (
     model_kind,
     resolve_model,
 )
+from apis_advanced_search.querybuilder.relation_columns import (
+    all_columns,
+    relation_groups,
+    relation_values,
+)
 from apis_advanced_search.querybuilder.relations import relation_options
-from apis_advanced_search.querybuilder.tree import QueryTreeError, empty_group, validate_node
-from apis_advanced_search.models import SavedQuery
+from apis_advanced_search.querybuilder.tree import (
+    QueryTreeError,
+    empty_group,
+    validate_node,
+)
 
 if COLLECTIONS_AVAILABLE:
     from apis_core.collections.models import SkosCollection
@@ -37,16 +44,16 @@ if COLLECTIONS_AVAILABLE:
 PAGE_SIZE = 25
 
 
-def _parse_sort(raw, model):
+def _parse_sort(raw, available):
     """Validate a requested sort, `{"field": ..., "direction": "asc"|"desc"}`
-    or null. Only sortable own columns of the queried model can be sorted on."""
+    or null. Only sortable columns the user can see can be sorted on."""
     if raw in (None, ""):
         return None
     if not isinstance(raw, dict):
         raise ValueError("Invalid sort.")
     field = raw.get("field")
     direction = raw.get("direction", "asc")
-    column = own_column_map(model).get(field)
+    column = available.get(field)
     if column is None or not column.sortable:
         raise ValueError(f"Cannot sort on {field!r}.")
     if direction not in ("asc", "desc"):
@@ -118,15 +125,21 @@ class ModelRelationsView(ModelResolvingAPIView):
         return Response(data)
 
 
+def _viewable(request):
+    return lambda model: can_view_model(request, model)
+
+
 class ModelColumnsView(ModelResolvingAPIView):
-    """The result-table columns offered for this model, and the defaults
-    the developer configured for it (see columns.py)."""
+    """The result-table columns offered for this model - its own fields and
+    the relation columns the user may view - and the defaults the developer
+    configured for it (see columns.py)."""
 
     def get(self, request, app_label, model_name):
+        available = all_columns(self.query_model, _viewable(request))
         return Response(
             {
-                "available": [column.to_dict() for column in own_columns(self.query_model)],
-                "defaults": default_column_names(self.query_model),
+                "available": [column.to_dict() for column in available.values()],
+                "defaults": default_column_names(self.query_model, available),
             }
         )
 
@@ -139,9 +152,10 @@ class ModelQueryView(ModelResolvingAPIView):
         except (QueryTreeError, QueryCompileError) as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        available = all_columns(self.query_model, _viewable(request))
         try:
-            sort = _parse_sort(request.data.get("sort"), self.query_model)
-            columns = requested_columns(self.query_model, request.data.get("columns"))
+            sort = _parse_sort(request.data.get("sort"), available)
+            columns = requested_columns(available, request.data.get("columns"))
         except ValueError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -150,18 +164,21 @@ class ModelQueryView(ModelResolvingAPIView):
         except (TypeError, ValueError):
             page = 1
 
-        queryset = load_relations(apply_ordering(queryset, sort), columns)
+        queryset = load_relations(apply_ordering(queryset, sort, available), columns)
         total = queryset.count()
         offset = (page - 1) * PAGE_SIZE
+        page_objects = list(queryset[offset : offset + PAGE_SIZE])
+        groups = {group.key: group for group in relation_groups(self.query_model, _viewable(request))}
+        related = relation_values(self.query_model, page_objects, columns, groups)
         content_type = ContentType.objects.get_for_model(self.query_model)
         results = [
             {
                 "id": obj.pk,
                 "label": str(obj),
                 "url": reverse("apis_core:generic:detail", args=[content_type, obj.pk]),
-                "values": row_values(obj, columns),
+                "values": {**row_values(obj, columns), **related[obj.pk]},
             }
-            for obj in queryset[offset : offset + PAGE_SIZE]
+            for obj in page_objects
         ]
         loaded = [column.name for column in columns if column.on_demand]
         return Response(
