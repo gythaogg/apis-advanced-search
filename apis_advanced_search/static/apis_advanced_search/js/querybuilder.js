@@ -69,9 +69,9 @@
   }
 
   // Traverse-mode labels are verbs ("lived in"), so "lived in a place"
-  // reads as a sentence on its own. Direct-mode labels ("the subject")
-  // aren't - "the subject a person" isn't grammatical - so they get the
-  // target type parenthesized instead.
+  // reads as a sentence on its own. Direct-mode labels ("Subject") are
+  // nouns, so they get the target type parenthesized instead: "Subject
+  // (a person)".
   function describeRelationOption(opt) {
     if (opt.relation_model === null) {
       return `${opt.label} (${articleFor(opt.target_verbose_name)})`;
@@ -128,16 +128,6 @@
       lookup: option.value,
       value: option.multi ? [] : null,
     };
-  }
-
-  // A group with no conditions has nothing to combine, so every group we
-  // create for the user - the root on model selection, a nested one from
-  // "+ Add group", or a relation's target/own filter - starts with one
-  // condition already in it.
-  function newGroupWithCondition(ctx) {
-    const group = emptyGroup();
-    group.children.push(newCondition(ctx));
-    return group;
   }
 
   // A relation node starts with nothing chosen - renderRelation shows a
@@ -522,7 +512,7 @@
         node.target_model = opt.target_model;
         node.label = opt.label;
         node.targetVerboseName = opt.target_verbose_name;
-        node.target_filter = newGroupWithCondition(ctxFor(opt.target_model));
+        node.target_filter = emptyGroup();
         rerender();
       });
     });
@@ -566,7 +556,7 @@
     body.appendChild(header);
 
     const targetCtx = ctxFor(node.target_model);
-    if (!node.target_filter) node.target_filter = newGroupWithCondition(targetCtx);
+    if (!node.target_filter) node.target_filter = emptyGroup();
     const targetContainer = el("div");
     renderGroup(node.target_filter, targetContainer, {
       isRoot: true,
@@ -593,11 +583,11 @@
         body.appendChild(ownContainer);
       } else {
         const addOwnFilterBtn = button(
-          "+ Add condition on this relation itself",
+          "+ Add field filter on this relation itself",
           "btn btn-sm btn-link text-muted mt-1",
           async () => {
             await fetchFields(node.relation_model);
-            node.own_filter = newGroupWithCondition(ctxFor(node.relation_model));
+            node.own_filter = emptyGroup();
             rerender();
           }
         );
@@ -665,7 +655,7 @@
     const header = el("div", "d-flex align-items-center gap-2 flex-wrap mb-2");
     // Excluding an entire fresh top-level query is rarely meaningful - the
     // toggle only earns its place once there's a nested group (built via
-    // "+ Add group") to apply it to.
+    // "+ Add filter group") to apply it to.
     if (!opts.isRoot) {
       header.append(excludeToggle(node));
     }
@@ -695,25 +685,30 @@
     });
     body.appendChild(childrenContainer);
 
-    // Add-condition/add-group/add-relation sit after the last child rather
-    // than up in the header, so they read as "add another one here". Add
-    // group and add relation filter are visually de-emphasized (link
-    // style) since they're both more advanced moves than adding another
-    // plain condition.
+    // A group starts empty, so say so instead of showing a blank box.
+    if (!node.children.length) {
+      const empty = el("div", "small text-muted fst-italic");
+      empty.textContent = opts.emptyText || "No filters yet.";
+      body.appendChild(empty);
+    }
+
+    // The three add controls sit after the last child rather than up in
+    // the header, so they read as "add another one here". All three share
+    // the same style and appear in the same order everywhere.
     const addRow = el("div", "d-flex align-items-center gap-2 mt-2 flex-wrap");
-    const addConditionBtn = button("+ Add condition", "btn btn-sm btn-outline-primary", () => {
+    const addFieldFilterBtn = button("+ Add field filter", "btn btn-sm btn-outline-primary", () => {
       node.children.push(newCondition(opts.ctx));
       renderGroup(node, container, opts);
     });
-    const addGroupBtn = button("+ Add group", "btn btn-sm btn-link text-muted", () => {
-      node.children.push(newGroupWithCondition(opts.ctx));
-      renderGroup(node, container, opts);
-    });
-    const addRelationBtn = button("+ Add relation filter", "btn btn-sm btn-link text-muted", () => {
+    const addRelationBtn = button("+ Add relation filter", "btn btn-sm btn-outline-primary", () => {
       node.children.push(newRelationNode());
       renderGroup(node, container, opts);
     });
-    addRow.append(addConditionBtn, addGroupBtn, addRelationBtn);
+    const addGroupBtn = button("+ Add filter group", "btn btn-sm btn-outline-primary", () => {
+      node.children.push(emptyGroup());
+      renderGroup(node, container, opts);
+    });
+    addRow.append(addFieldFilterBtn, addRelationBtn, addGroupBtn);
     body.appendChild(addRow);
 
     box.appendChild(body);
@@ -788,11 +783,12 @@
     state.lastResults = null;
     if (presetTree) await preloadModelsForTree(presetTree, modelLabel);
     const ctx = ctxFor(modelLabel);
-    state.tree = presetTree || newGroupWithCondition(ctx);
+    state.tree = presetTree || emptyGroup();
     renderGroup(state.tree, builderRoot, {
       isRoot: true,
       ctx,
       legend: capitalize(state.modelVerboseNames[modelLabel]),
+      emptyText: "No filters yet. All records match.",
     });
     resultsEl.innerHTML = "";
     searchBtn.disabled = false;
