@@ -17,7 +17,7 @@ Two shapes, both represented the same way to the frontend/tree:
   yields two distinct options, one per direction.
 - From a Relation model itself: there is nothing to enumerate - every
   relation has exactly one fixed subject and one fixed object slot, so
-  the two options are always just "the subject" / "the object".
+  the two options are always just "Subject" / "Object".
 
 In both cases `direction` means the same thing: which GFK slot (subj or
 obj) the *target* side sits in - not which slot the current model sits
@@ -45,14 +45,14 @@ def relation_options(model) -> list[dict]:
             {
                 "relation_model": None,
                 "direction": "subj",
-                "label": "the subject",
+                "label": "Subject",
                 "target_model": _model_label(subj_model),
                 "target_verbose_name": str(subj_model._meta.verbose_name),
             },
             {
                 "relation_model": None,
                 "direction": "obj",
-                "label": "the object",
+                "label": "Object",
                 "target_model": _model_label(obj_model),
                 "target_verbose_name": str(obj_model._meta.verbose_name),
             },
