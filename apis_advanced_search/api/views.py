@@ -11,6 +11,13 @@ from apis_advanced_search.querybuilder.collections import (
     COLLECTIONS_AVAILABLE,
     bulk_add_to_collection,
 )
+from apis_advanced_search.querybuilder.columns import (
+    apply_ordering,
+    default_column_names,
+    native_column_map,
+    native_columns,
+    row_values,
+)
 from apis_advanced_search.querybuilder.compiler import QueryCompileError, build_queryset
 from apis_advanced_search.querybuilder.introspection import get_filterable_fields
 from apis_advanced_search.querybuilder.registry import (
@@ -26,6 +33,22 @@ if COLLECTIONS_AVAILABLE:
     from apis_core.collections.models import SkosCollection
 
 PAGE_SIZE = 25
+
+
+def _parse_sort(raw, model):
+    """Validate a requested sort, `{"field": ..., "direction": "asc"|"desc"}`
+    or null. Only native columns of the queried model can be sorted on."""
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid sort.")
+    field = raw.get("field")
+    direction = raw.get("direction", "asc")
+    if field not in native_column_map(model):
+        raise ValueError(f"Cannot sort on {field!r}.")
+    if direction not in ("asc", "desc"):
+        raise ValueError("Sort direction must be 'asc' or 'desc'.")
+    return {"field": field, "direction": direction}
 
 
 class ModelResolvingAPIView(APIView):
@@ -92,6 +115,19 @@ class ModelRelationsView(ModelResolvingAPIView):
         return Response(data)
 
 
+class ModelColumnsView(ModelResolvingAPIView):
+    """The result-table columns offered for this model, and the defaults
+    the developer configured for it (see columns.py)."""
+
+    def get(self, request, app_label, model_name):
+        return Response(
+            {
+                "available": [column.to_dict() for column in native_columns(self.query_model)],
+                "defaults": default_column_names(self.query_model),
+            }
+        )
+
+
 class ModelQueryView(ModelResolvingAPIView):
     def post(self, request, app_label, model_name):
         tree = request.data.get("query") or empty_group()
@@ -101,10 +137,17 @@ class ModelQueryView(ModelResolvingAPIView):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            sort = _parse_sort(request.data.get("sort"), self.query_model)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
             page = max(int(request.data.get("page", 1)), 1)
         except (TypeError, ValueError):
             page = 1
 
+        queryset = apply_ordering(queryset, sort)
+        columns = native_columns(self.query_model)
         total = queryset.count()
         offset = (page - 1) * PAGE_SIZE
         content_type = ContentType.objects.get_for_model(self.query_model)
@@ -113,6 +156,7 @@ class ModelQueryView(ModelResolvingAPIView):
                 "id": obj.pk,
                 "label": str(obj),
                 "url": reverse("apis_core:generic:detail", args=[content_type, obj.pk]),
+                "values": row_values(obj, columns),
             }
             for obj in queryset[offset : offset + PAGE_SIZE]
         ]

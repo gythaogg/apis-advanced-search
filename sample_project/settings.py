@@ -19,3 +19,7 @@ for app in ADDITIONAL_APPS:
 
 
 APIS_ANON_VIEWS_ALLOWED = True
+
+APIS_ADVANCED_SEARCH_COLUMNS = {
+    "sample_project.person": ["date_of_birth", "date_of_death", "gender"],
+}

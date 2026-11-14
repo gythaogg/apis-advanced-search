@@ -29,3 +29,21 @@
 .qb-value-cell {
   min-width: 12rem;
 }
+
+/* Bootstrap has no sticky-column utility (sticky-top only pins to the top
+   edge), so the object's label is pinned to the left edge here while a wide
+   results table scrolls sideways. The background is the table's own, so the
+   striped and hover shading still shows through the sticky cell. */
+.qb-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--bs-table-bg);
+}
+
+/* Bootstrap has no cursor utilities, so the grab cursor on a draggable
+   column chip is custom. Text selection is turned off with Bootstrap's
+   user-select-none class in the markup. */
+.qb-column-chip {
+  cursor: grab;
+}

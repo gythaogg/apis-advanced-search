@@ -33,9 +33,24 @@
     // to load a saved query, so the model-select's own change handler
     // (which otherwise always starts a fresh tree) uses this tree instead.
     pendingLoadTree: null,
+    // Result-table columns, per model label: { available: [...], defaults: [...] }.
+    columnsCache: {},
+    // Names of the native columns shown, in display order, for the current model.
+    visibleColumns: [],
+    // { field, direction } or null (the model's own ordering).
+    sort: null,
+    // The last search's response and page, so the table can be redrawn
+    // when columns change without another request.
+    lastResults: null,
+    columnPanelOpen: false,
+    columnSearch: "",
   };
 
   let app, modelSelect, savedQuerySelect, builderRoot, resultsEl, searchBtn;
+  // Containers inside the results area, recreated by each renderResults call.
+  let columnPanelEl, tableEl;
+  // Index of the chip being dragged to reorder columns, or null.
+  let dragColumnIndex = null;
   let idCounter = 0;
 
   function nextId(prefix) {
@@ -764,6 +779,11 @@
     state.addToCollectionUrl = buildUrl(app.dataset.addToCollectionUrlTemplate, modelLabel);
 
     await fetchFields(modelLabel);
+    const columns = await fetchColumns(modelLabel);
+    state.sort = null;
+    state.visibleColumns = [...columns.defaults];
+    state.columnPanelOpen = false;
+    state.lastResults = null;
     if (presetTree) await preloadModelsForTree(presetTree, modelLabel);
     const ctx = ctxFor(modelLabel);
     state.tree = presetTree || newGroupWithCondition(ctx);
@@ -924,9 +944,9 @@
     const nameInput = el("input", "form-control form-control-sm w-auto");
     nameInput.type = "text";
     nameInput.placeholder = "New collection name";
-    nameInput.style.display = select.value === NEW_COLLECTION_VALUE ? "" : "none";
+    nameInput.classList.toggle("d-none", select.value !== NEW_COLLECTION_VALUE);
     onSelectChange(select, () => {
-      nameInput.style.display = select.value === NEW_COLLECTION_VALUE ? "" : "none";
+      nameInput.classList.toggle("d-none", select.value !== NEW_COLLECTION_VALUE);
     });
 
     const status = el("span", "small text-muted");
@@ -972,41 +992,244 @@
     container.appendChild(wrap);
   }
 
+  async function fetchColumns(modelLabel) {
+    if (!state.columnsCache[modelLabel]) {
+      state.columnsCache[modelLabel] = await fetchJSON(
+        buildUrl(app.dataset.columnsUrlTemplate, modelLabel)
+      );
+    }
+    return state.columnsCache[modelLabel];
+  }
+
+  function availableColumns() {
+    const cached = state.columnsCache[state.model];
+    return cached ? cached.available : [];
+  }
+
+  function columnInfo(name) {
+    return availableColumns().find((col) => col.name === name);
+  }
+
+  function setVisibleColumns(names) {
+    state.visibleColumns = names;
+    renderColumnPanel();
+    renderTable();
+  }
+
+  function sortIndicator(name) {
+    if (!state.sort || state.sort.field !== name) return "";
+    return state.sort.direction === "desc" ? " ▼" : " ▲";
+  }
+
+  // Clicking a column header sorts by it; clicking again flips the
+  // direction. Sorting always goes back to the first page.
+  function toggleSort(name) {
+    if (state.sort && state.sort.field === name) {
+      state.sort = { field: name, direction: state.sort.direction === "asc" ? "desc" : "asc" };
+    } else {
+      state.sort = { field: name, direction: "asc" };
+    }
+    runSearch(1);
+  }
+
+  function columnChip(name, index) {
+    const col = columnInfo(name);
+    const chip = el(
+      "span",
+      "badge text-bg-secondary d-inline-flex align-items-center gap-2 py-2 px-2 user-select-none qb-column-chip"
+    );
+    chip.draggable = true;
+    const text = el("span");
+    text.textContent = col ? capitalize(col.label) : name;
+    const remove = button("×", "btn btn-sm p-0 px-1 text-white lh-1", () => {
+      setVisibleColumns(state.visibleColumns.filter((n) => n !== name));
+    });
+    remove.setAttribute("aria-label", `Remove ${text.textContent}`);
+    chip.append(text, remove);
+
+    chip.addEventListener("dragstart", (event) => {
+      dragColumnIndex = index;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", name);
+    });
+    chip.addEventListener("dragover", (event) => event.preventDefault());
+    chip.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (dragColumnIndex === null || dragColumnIndex === index) return;
+      const names = [...state.visibleColumns];
+      const [moved] = names.splice(dragColumnIndex, 1);
+      names.splice(index, 0, moved);
+      dragColumnIndex = null;
+      setVisibleColumns(names);
+    });
+    return chip;
+  }
+
+  function columnCheckbox(col, selected) {
+    const wrap = el("div", "form-check mb-0");
+    const checkboxId = nextId("qb-column");
+    const checkbox = el("input", "form-check-input");
+    checkbox.type = "checkbox";
+    checkbox.id = checkboxId;
+    checkbox.checked = selected;
+    checkbox.addEventListener("change", () => {
+      const names = checkbox.checked
+        ? [...state.visibleColumns, col.name]
+        : state.visibleColumns.filter((n) => n !== col.name);
+      setVisibleColumns(names);
+    });
+    const label = el("label", "form-check-label small");
+    label.setAttribute("for", checkboxId);
+    label.textContent = capitalize(col.label);
+    wrap.append(checkbox, label);
+    return wrap;
+  }
+
+  // The picker. Native fields of the queried model only in this phase; the
+  // sections for relations are added in a later phase.
+  function renderColumnPanel() {
+    if (!columnPanelEl) return;
+    columnPanelEl.innerHTML = "";
+    if (!state.columnPanelOpen) return;
+
+    const available = availableColumns();
+    const defaults = state.columnsCache[state.model] ? state.columnsCache[state.model].defaults : [];
+    const panel = el("div", "card card-body bg-light mb-3 qb-columns-panel");
+
+    const chipsHeading = el("div", "small text-muted mb-1");
+    chipsHeading.textContent = "Shown, in this order (drag to reorder)";
+    const chips = el("div", "d-flex flex-wrap gap-2 mb-3");
+    if (state.visibleColumns.length) {
+      state.visibleColumns.forEach((name, index) => chips.appendChild(columnChip(name, index)));
+    } else {
+      const none = el("span", "small text-muted");
+      none.textContent = "No extra columns - only the label is shown.";
+      chips.appendChild(none);
+    }
+
+    const controls = el("div", "d-flex flex-wrap align-items-center gap-3 mb-2");
+    const search = el("input", "form-control form-control-sm w-auto");
+    search.type = "search";
+    search.placeholder = "Search fields…";
+    search.value = state.columnSearch;
+    const resetBtn = button("Reset to defaults", "btn btn-sm btn-outline-secondary", () => {
+      setVisibleColumns([...defaults]);
+    });
+    controls.append(search, resetBtn);
+
+    const sectionHeading = el("div", "small fw-semibold mb-1");
+    const list = el("div", "row row-cols-2 row-cols-lg-4 g-1");
+
+    const drawList = () => {
+      list.innerHTML = "";
+      const query = state.columnSearch.trim().toLowerCase();
+      available.forEach((col) => {
+        const selected = state.visibleColumns.includes(col.name);
+        if (query && !col.label.toLowerCase().includes(query)) return;
+        const cell = el("div", "col");
+        cell.appendChild(columnCheckbox(col, selected));
+        list.appendChild(cell);
+      });
+      const shown = state.visibleColumns.filter((name) => columnInfo(name)).length;
+      sectionHeading.textContent =
+        `${capitalize(state.modelVerboseNames[state.model] || "")} fields (${shown} of ${available.length} shown)`;
+    };
+    search.addEventListener("input", () => {
+      state.columnSearch = search.value;
+      drawList();
+    });
+    drawList();
+
+    panel.append(chipsHeading, chips, controls, sectionHeading, list);
+    columnPanelEl.appendChild(panel);
+  }
+
+  function renderTable() {
+    if (!tableEl) return;
+    tableEl.innerHTML = "";
+    if (!state.lastResults || !state.lastResults.data.results.length) return;
+    const { data } = state.lastResults;
+    const columns = state.visibleColumns.map(columnInfo).filter(Boolean);
+
+    const wrap = el("div", "table-responsive");
+    const table = el("table", "table table-sm table-striped table-hover align-middle mb-0");
+    const thead = el("thead");
+    const headRow = el("tr");
+
+    const labelTh = el("th", "qb-sticky-col");
+    labelTh.textContent = capitalize(state.modelVerboseNames[state.model] || "");
+    headRow.appendChild(labelTh);
+
+    columns.forEach((col) => {
+      const th = el("th");
+      const sortBtn = button(
+        capitalize(col.label) + sortIndicator(col.name),
+        "btn btn-link btn-sm p-0 text-reset text-decoration-none fw-semibold text-nowrap",
+        () => toggleSort(col.name)
+      );
+      if (state.sort && state.sort.field === col.name) {
+        th.setAttribute("aria-sort", state.sort.direction === "desc" ? "descending" : "ascending");
+      }
+      th.appendChild(sortBtn);
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+
+    const tbody = el("tbody");
+    data.results.forEach((result) => {
+      const tr = el("tr");
+      const td = el("td", "qb-sticky-col");
+      if (result.url) {
+        const a = el("a");
+        a.href = result.url;
+        a.textContent = result.label;
+        td.appendChild(a);
+      } else {
+        td.textContent = result.label;
+      }
+      tr.appendChild(td);
+      columns.forEach((col) => {
+        const cell = el("td");
+        cell.textContent = result.values[col.name] || "";
+        tr.appendChild(cell);
+      });
+      tbody.appendChild(tr);
+    });
+
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    tableEl.appendChild(wrap);
+  }
+
   function renderResults(data, page) {
     state.resultsGeneration += 1;
     const generation = state.resultsGeneration;
+    state.lastResults = { data, page };
     resultsEl.innerHTML = "";
 
     const header = el("div", "d-flex align-items-center gap-3 flex-wrap mb-2");
     const summary = el("span");
     summary.textContent = `${data.count} result${data.count === 1 ? "" : "s"}`;
     header.appendChild(summary);
+
+    const available = availableColumns();
+    if (data.count > 0 && available.length) {
+      const columnsBtn = button("Columns", "btn btn-sm btn-outline-secondary", () => {
+        state.columnPanelOpen = !state.columnPanelOpen;
+        renderColumnPanel();
+      });
+      header.appendChild(columnsBtn);
+    }
     resultsEl.appendChild(header);
 
     if (data.count > 0 && state.isAuthenticated && state.collectionsEnabled) {
       renderCollectionControls(header, generation);
     }
 
-    if (data.results.length) {
-      const table = el("table", "table table-sm table-striped");
-      const tbody = el("tbody");
-      data.results.forEach((result) => {
-        const tr = el("tr");
-        const td = el("td");
-        if (result.url) {
-          const a = el("a");
-          a.href = result.url;
-          a.textContent = result.label;
-          td.appendChild(a);
-        } else {
-          td.textContent = result.label;
-        }
-        tr.appendChild(td);
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      resultsEl.appendChild(table);
-    }
+    columnPanelEl = el("div");
+    resultsEl.appendChild(columnPanelEl);
+    tableEl = el("div");
+    resultsEl.appendChild(tableEl);
 
     const totalPages = Math.max(Math.ceil(data.count / data.page_size), 1);
     if (totalPages > 1) {
@@ -1020,6 +1243,9 @@
       nav.append(prev, label, next);
       resultsEl.appendChild(nav);
     }
+
+    renderColumnPanel();
+    renderTable();
   }
 
   async function runSearch(page) {
@@ -1032,7 +1258,7 @@
           "Content-Type": "application/json",
           "X-CSRFToken": state.csrfToken,
         },
-        body: JSON.stringify({ query: state.tree, page: page }),
+        body: JSON.stringify({ query: state.tree, page: page, sort: state.sort }),
       });
       renderResults(data, page);
     } catch (err) {

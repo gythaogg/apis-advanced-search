@@ -33,6 +33,14 @@ In case of trouble, compare your APIS instance with the sample_project APIS inst
 ## Settings
 `APIS_ANON_VIEWS_ALLOWED` from `apis-core-rdf` is used to determine if the results can be shown to anonymous users.
 
+`APIS_ADVANCED_SEARCH_COLUMNS` sets the columns shown by default in the results table, per model.
+
+```python
+APIS_ADVANCED_SEARCH_COLUMNS = {
+    "sample_project.person": ["date_of_birth", "date_of_death", "gender"],
+    }
+```
+
 If `apis_core.collections` is not included in `INSTALLED_APPS`, it will not be possible to add search results to a collection. A warning will be logged when the server starts.
 
 ## Why
