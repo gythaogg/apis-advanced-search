@@ -542,14 +542,21 @@
       node.negate = negateSelect.value === "true";
     });
 
+    // Bold marks the two things being filtered on: the relation's label and
+    // the target entity's name. The article stays plain.
     const sentence = el("span");
-    const relationLabel = el("em");
+    const relationLabel = el("strong");
     relationLabel.textContent = node.label;
-    const article = articleFor(node.targetVerboseName);
-    const rest = document.createTextNode(
-      node.relation_model === null ? ` (${article}) where:` : ` ${article} where:`
+    const article = /^[aeiou]/i.test(node.targetVerboseName) ? "an" : "a";
+    const targetName = el("strong");
+    targetName.textContent = node.targetVerboseName;
+    const direct = node.relation_model === null;
+    sentence.append(
+      relationLabel,
+      document.createTextNode(direct ? ` (${article} ` : ` ${article} `),
+      targetName,
+      document.createTextNode(direct ? ") where:" : " where:")
     );
-    sentence.append(relationLabel, rest);
 
     header.append(negateSelect, sentence);
     header.appendChild(button("Remove relation filter", "btn btn-sm btn-outline-danger ms-auto", onRemove));
@@ -579,11 +586,11 @@
 
         const ownCtx = ctxFor(node.relation_model);
         const ownContainer = el("div");
-        renderGroup(node.own_filter, ownContainer, { isRoot: true, ctx: ownCtx });
+        renderGroup(node.own_filter, ownContainer, { isRoot: true, ctx: ownCtx, fieldFiltersOnly: true });
         body.appendChild(ownContainer);
       } else {
         const addOwnFilterBtn = button(
-          "+ Add field filter on this relation itself",
+          "",
           "btn btn-sm btn-link text-muted mt-1",
           async () => {
             await fetchFields(node.relation_model);
@@ -591,6 +598,9 @@
             rerender();
           }
         );
+        const ownLinkLabel = el("strong");
+        ownLinkLabel.textContent = node.label;
+        addOwnFilterBtn.append("+ Add field filter on the '", ownLinkLabel, "' relation");
         body.appendChild(addOwnFilterBtn);
       }
     }
@@ -708,7 +718,13 @@
       node.children.push(emptyGroup());
       renderGroup(node, container, opts);
     });
-    addRow.append(addFieldFilterBtn, addRelationBtn, addGroupBtn);
+    // A relation's own fields can only be filtered directly, so its section
+    // offers just the field filter button.
+    if (opts.fieldFiltersOnly) {
+      addRow.append(addFieldFilterBtn);
+    } else {
+      addRow.append(addFieldFilterBtn, addRelationBtn, addGroupBtn);
+    }
     body.appendChild(addRow);
 
     box.appendChild(body);
