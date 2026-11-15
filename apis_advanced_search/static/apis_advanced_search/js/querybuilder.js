@@ -574,9 +574,19 @@
 
     if (node.relation_model) {
       if (node.own_filter) {
+        // Both blocks apply to the same relation row, so they are ANDed.
+        // This is shown as a fixed label rather than a connector, because
+        // there is no choice to make here.
+        const andBadge = el("div", "small fw-semibold text-uppercase text-muted ms-2 my-1");
+        andBadge.textContent = "And";
+        andBadge.title = "Both blocks must match the same relation.";
+        body.appendChild(andBadge);
+
         const ownHeader = el("div", "d-flex align-items-center gap-2 mt-2 mb-1");
         const ownLabel = el("span", "small text-muted");
-        ownLabel.textContent = "About this relation itself:";
+        ownLabel.textContent = node.negate
+          ? "No relation where the relation itself matches:"
+          : "And the relation itself:";
         const removeOwnBtn = button("✕", "btn btn-sm btn-outline-secondary", () => {
           node.own_filter = null;
           rerender();
