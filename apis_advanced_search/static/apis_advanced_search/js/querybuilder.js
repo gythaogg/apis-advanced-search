@@ -6,6 +6,7 @@
     tree: null,
     queryUrl: null,
     queryDebugUrl: null,
+    queryTimingUrl: null,
     // The query from the most recent successful search, copied as sent, plus
     // what the debug panel needs to show it. Kept separately from state.tree,
     // so editing the builder doesn't change what the panel describes.
@@ -58,7 +59,13 @@
   let columnPanelEl, tableEl;
   // Empty when the debug panel is turned off in settings, so the results
   // header doesn't offer a button for it.
-  const debugEls = { toggle: null, json: null, orm: null, meta: null, overlay: null };
+  const debugEls = { toggle: null, json: null, orm: null, meta: null, overlay: null, timing: null };
+  const TIMING_LABELS = {
+    compile: "Build query",
+    count: "Count matches",
+    page: "Fetch first page",
+    rows: "Build rows",
+  };
   // Index of the chip being dragged to reorder columns, or null.
   let dragColumnIndex = null;
   let idCounter = 0;
@@ -808,6 +815,7 @@
     state.model = modelLabel;
     state.queryUrl = buildUrl(app.dataset.queryUrlTemplate, modelLabel);
     state.queryDebugUrl = buildUrl(app.dataset.queryDebugUrlTemplate, modelLabel);
+    state.queryTimingUrl = buildUrl(app.dataset.queryTimingUrlTemplate, modelLabel);
     state.addToCollectionUrl = buildUrl(app.dataset.addToCollectionUrlTemplate, modelLabel);
 
     await fetchFields(modelLabel);
@@ -1316,7 +1324,7 @@
     // appended after this point, once their fetch completes.
     if (debugEls.toggle) {
       header.appendChild(
-        button("Show query", "btn btn-sm btn-outline-secondary ms-auto order-last", openDebugPanel)
+        button("Inspect", "btn btn-sm btn-outline-secondary ms-auto order-last", openDebugPanel)
       );
     }
 
@@ -1359,9 +1367,11 @@
   // part waits for a response.
   async function loadDebugPanel() {
     const run = state.lastRun;
-    debugEls.json.textContent = JSON.stringify(run.query, null, 2);
+    debugEls.json.textContent = JSON.stringify(run.request.query, null, 2);
     debugEls.meta.textContent = `${run.modelLabel} · last run ${run.ranAt.toLocaleTimeString()}`;
     debugEls.orm.textContent = "Loading…";
+    // A measurement belongs to the query it timed, so clear any earlier one.
+    showTimingMessage("Press Measure to time the first page.");
     try {
       const data = await fetchJSON(run.debugUrl, {
         method: "POST",
@@ -1369,11 +1379,63 @@
           "Content-Type": "application/json",
           "X-CSRFToken": state.csrfToken,
         },
-        body: JSON.stringify({ query: run.query }),
+        body: JSON.stringify({ query: run.request.query }),
       });
       debugEls.orm.textContent = data.orm;
     } catch (err) {
       debugEls.orm.textContent = `Could not build the ORM query: ${err.message}`;
+    }
+  }
+
+  // Timing runs only on request, because it queries the database again. It
+  // times the first page with the last search's sort and columns.
+  function showTimingMessage(text, className = "text-secondary") {
+    const span = el("span", className);
+    span.textContent = text;
+    debugEls.timing.replaceChildren(span);
+  }
+
+  // One row per phase, with times right-aligned so they compare at a glance.
+  // The total is set apart at the top, and the statement and match counts sit
+  // above the table. The block is short, so it doesn't need its own scrollbar.
+  function renderTiming(data) {
+    const summary = el("div", "text-secondary mb-2");
+    summary.textContent = `${data.count} matches · ${data.queries} SQL statements`;
+
+    const table = el("table", "table table-dark table-sm mb-0");
+    const body = el("tbody");
+    const addRow = (label, ms, strong) => {
+      const tr = el("tr");
+      const labelCell = el("td", strong ? "fw-bold" : "ps-3");
+      labelCell.textContent = label;
+      const valueCell = el("td", `text-end font-monospace${strong ? " fw-bold" : ""}`);
+      valueCell.textContent = `${Number(ms).toFixed(1)} ms`;
+      tr.append(labelCell, valueCell);
+      body.appendChild(tr);
+    };
+    addRow("Total", data.total_ms, true);
+    Object.entries(data.phases).forEach(([name, ms]) => addRow(TIMING_LABELS[name] || name, ms, false));
+    table.appendChild(body);
+
+    debugEls.timing.replaceChildren(summary, table);
+  }
+
+  async function measureDebugQuery() {
+    const run = state.lastRun;
+    if (!run) return;
+    showTimingMessage("Measuring…");
+    try {
+      const data = await fetchJSON(run.timingUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": state.csrfToken,
+        },
+        body: JSON.stringify({ ...run.request, page: 1 }),
+      });
+      renderTiming(data);
+    } catch (err) {
+      showTimingMessage(`Could not measure: ${err.message}`, "text-danger");
     }
   }
 
@@ -1414,6 +1476,8 @@
     debugEls.json = document.getElementById("qb-debug-json");
     debugEls.orm = document.getElementById("qb-debug-orm");
     debugEls.meta = document.getElementById("qb-debug-meta");
+    debugEls.timing = document.getElementById("qb-debug-timing");
+    document.getElementById("qb-debug-measure").addEventListener("click", measureDebugQuery);
 
     // Opening goes through openDebugPanel, which also loads the text, so the
     // checkbox needs no change handler. Only closing is wired up here.
@@ -1436,7 +1500,11 @@
   async function runSearch(page) {
     page = page || 1;
     resultsEl.innerHTML = "<p>Searching…</p>";
-    const sentTree = JSON.parse(JSON.stringify(state.tree));
+    // Copied as sent (JSON round trip), so later edits to the builder or the
+    // sort don't change what the debug panel describes.
+    const sentRequest = JSON.parse(
+      JSON.stringify({ query: state.tree, sort: state.sort, columns: state.visibleColumns })
+    );
     try {
       const data = await fetchJSON(state.queryUrl, {
         method: "POST",
@@ -1444,17 +1512,13 @@
           "Content-Type": "application/json",
           "X-CSRFToken": state.csrfToken,
         },
-        body: JSON.stringify({
-          query: sentTree,
-          page: page,
-          sort: state.sort,
-          columns: state.visibleColumns,
-        }),
+        body: JSON.stringify({ ...sentRequest, page: page }),
       });
       state.lastRun = {
-        query: sentTree,
+        request: sentRequest,
         modelLabel: state.model,
         debugUrl: state.queryDebugUrl,
+        timingUrl: state.queryTimingUrl,
         ranAt: new Date(),
       };
       renderResults(data, page);

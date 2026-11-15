@@ -26,15 +26,38 @@ def debug_enabled() -> bool:
     return bool(getattr(settings, "APIS_ADVANCED_SEARCH_DEBUG", True))
 
 
+LINE_WIDTH = 80
+
+
 def _indent(text: str) -> str:
     return "\n".join(f"    {line}" for line in text.splitlines())
 
 
+def _wrap(prefix: str, inner: str, force: bool = False) -> str:
+    """`prefix(inner)`. The inner text goes on indented lines of its own when
+    it's multi-line, too long for one line, or `force` is set."""
+    if force or "\n" in inner or len(prefix) + len(inner) > LINE_WIDTH:
+        return f"{prefix}(\n{_indent(inner)}\n)"
+    return f"{prefix}({inner})"
+
+
 def _call(name: str, arg: str) -> str:
-    """`name(arg)`, with a multi-line arg moved onto indented lines of its own."""
-    if "\n" in arg:
-        return f"{name}(\n{_indent(arg)}\n)"
-    return f"{name}({arg})"
+    """`name(arg)`. A nested query call always goes on its own lines, so the
+    structure of the query can be read down the page."""
+    return _wrap(name, arg, force="(" in arg)
+
+
+def _join(children: list[str], joiner: str) -> str:
+    """Children joined by AND/OR. Each operator starts its own line when the
+    join is long or any child spans lines."""
+    if len(children) == 1:
+        return children[0]
+    one_line = joiner.join(children)
+    if any("\n" in child for child in children) or len(one_line) > LINE_WIDTH:
+        lines = [children[0]] + [f"{joiner.strip()} {child}" for child in children[1:]]
+        body = "\n".join(lines)
+        return f"(\n{_indent(body)}\n)"
+    return f"({one_line})"
 
 
 def _chain(base: str, calls: list[tuple[str, str]]) -> str:
@@ -61,7 +84,7 @@ def _condition(node: dict, field_map: dict) -> str:
         text = _call("Q", f"{field_name}__isnull=True")
         if field_info.type == "text":
             empty_text = _call("Q", f"{field_name}__exact={''!r}")
-            text = f"({text} | {empty_text})"
+            text = _join([text, empty_text], " | ")
     else:
         django_lookup = option["lookup"]
         raw_value = node.get("value")
@@ -75,12 +98,12 @@ def _condition(node: dict, field_map: dict) -> str:
                 parts = [
                     _call("Q", f"{field_name}__{django_lookup}={v!r}") for v in values
                 ]
-                text = parts[0] if len(parts) == 1 else "(" + " | ".join(parts) + ")"
+                text = _join(parts, " | ")
         else:
             value = raw_value[0] if isinstance(raw_value, list) else raw_value
             text = _call("Q", f"{field_name}__{django_lookup}={value!r}")
 
-    return f"~({text})" if option["negate"] else text
+    return _wrap("~", text) if option["negate"] else text
 
 
 def _group(node: dict, model, field_map: dict) -> str:
@@ -88,12 +111,9 @@ def _group(node: dict, model, field_map: dict) -> str:
     children = [_node(child, model, field_map) for child in node.get("children", [])]
     if not children:
         text = "Q()"
-    elif len(children) == 1:
-        text = children[0]
     else:
-        joiner = " & " if operator == "AND" else " | "
-        text = "(" + joiner.join(children) + ")"
-    return f"~({text})" if node.get("negate") else text
+        text = _join(children, " & " if operator == "AND" else " | ")
+    return _wrap("~", text) if node.get("negate") else text
 
 
 def _target_pks(model, filter_tree: dict | None) -> str | None:
@@ -153,7 +173,7 @@ def _relation(node: dict, model) -> str:
         relation_qs = _chain(f"{relation_model._meta.object_name}.objects", calls)
         text = _call("Q", f"pk__in={relation_qs}")
 
-    return f"~({text})" if node.get("negate") else text
+    return _wrap("~", text) if node.get("negate") else text
 
 
 def _node(node: dict, model, field_map: dict) -> str:

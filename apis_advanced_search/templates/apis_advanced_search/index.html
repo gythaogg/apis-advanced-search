@@ -25,7 +25,8 @@
        data-is-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}"
        data-collections-enabled="{{ collections_enabled|yesno:'true,false' }}"
        data-debug-enabled="{{ debug_enabled|yesno:'true,false' }}"
-       data-query-debug-url-template="{% url 'apis_advanced_search:api-model-query-debug' app_label='__app__' model_name='__model__' %}">
+       data-query-debug-url-template="{% url 'apis_advanced_search:api-model-query-debug' app_label='__app__' model_name='__model__' %}"
+       data-query-timing-url-template="{% url 'apis_advanced_search:api-model-query-timing' app_label='__app__' model_name='__model__' %}">
 
     <div class="row mt-3">
       <div class="col-12 col-xl-9 mx-auto">
@@ -56,7 +57,7 @@
       <div class="qb-debug-overlay position-fixed top-0 start-0 end-0 bottom-0 p-3 align-items-center justify-content-center" id="qb-debug-overlay">
         <div class="qb-debug-panel bg-dark text-light rounded p-3 overflow-auto" role="dialog" aria-modal="true" aria-labelledby="qb-debug-title">
           <div class="d-flex align-items-center gap-2 mb-3">
-            <h2 id="qb-debug-title" class="h6 mb-0 me-auto">Developer: last query</h2>
+            <h2 id="qb-debug-title" class="h6 mb-0 me-auto">Inspector</h2>
             <span id="qb-debug-meta" class="small text-secondary"></span>
             <button type="button" class="btn btn-sm btn-outline-light" data-debug-close>Close</button>
           </div>
@@ -71,7 +72,15 @@
             <span class="small text-uppercase text-secondary me-auto">Django ORM</span>
             <button type="button" class="btn btn-sm btn-outline-light" data-copy="qb-debug-orm">Copy</button>
           </div>
-          <pre id="qb-debug-orm" class="qb-debug-code font-monospace small bg-dark border border-secondary text-light rounded p-3 mb-0 overflow-auto"></pre>
+          <pre id="qb-debug-orm" class="qb-debug-code font-monospace small bg-dark border border-secondary text-light rounded p-3 mb-3 overflow-auto"></pre>
+
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="small text-uppercase text-secondary me-auto">Performance</span>
+            <button type="button" class="btn btn-sm btn-outline-light" id="qb-debug-measure">Measure</button>
+          </div>
+          <div id="qb-debug-timing" class="small rounded border border-secondary p-3 mb-0">
+            <span class="text-secondary">Times the first page on the server, with the same sort and columns as the last search. Runs only when you press Measure.</span>
+          </div>
         </div>
       </div>
     {% endif %}

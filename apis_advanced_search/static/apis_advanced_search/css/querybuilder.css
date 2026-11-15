@@ -68,8 +68,11 @@
   max-height: calc(100vh - 2rem);
 }
 
-/* Bootstrap has no white-space utility that keeps line breaks and indentation. */
+/* Each code block grows with its content up to a cap, then scrolls inside
+   itself (overflow-auto in the markup). Bootstrap's height utilities only go
+   up to 100%, so the cap is custom. Bootstrap also has no white-space utility
+   that keeps line breaks and indentation. */
 .qb-debug-code {
-  max-height: 32vh;
+  max-height: 16rem;
   white-space: pre;
 }

@@ -1,4 +1,8 @@
+from contextlib import contextmanager, nullcontext
+from time import perf_counter
+
 from django.contrib.contenttypes.models import ContentType
+from django.db import connection
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -145,33 +149,67 @@ class ModelColumnsView(ModelResolvingAPIView):
         )
 
 
-class ModelQueryView(ModelResolvingAPIView):
-    def post(self, request, app_label, model_name):
-        tree = request.data.get("query") or empty_group()
+class SearchRequestError(Exception):
+    """The search was asked for something it can't do - shown to the user as-is."""
+
+
+class _Timings:
+    """Wall-clock time of each named phase of a search, in milliseconds."""
+
+    def __init__(self):
+        self.ms = {}
+
+    @contextmanager
+    def phase(self, name):
+        start = perf_counter()
         try:
-            queryset = build_queryset(self.query_model, tree)
+            yield
+        finally:
+            self.ms[name] = round((perf_counter() - start) * 1000, 1)
+
+
+def _run_search(request, model, data, timings=None):
+    """Compile the query, count the matches and fetch one page of results.
+
+    Shared by the search endpoint and the debug timing endpoint, so that a
+    timing measures the steps a real search takes. `timings`, when given,
+    records how long each phase takes."""
+
+    def phase(name):
+        return timings.phase(name) if timings is not None else nullcontext()
+
+    with phase("compile"):
+        tree = data.get("query") or empty_group()
+        try:
+            queryset = build_queryset(model, tree)
         except (QueryTreeError, QueryCompileError) as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise SearchRequestError(str(exc))
 
-        available = all_columns(self.query_model, _viewable(request))
+        available = all_columns(model, _viewable(request))
         try:
-            sort = _parse_sort(request.data.get("sort"), available)
-            columns = requested_columns(available, request.data.get("columns"))
+            sort = _parse_sort(data.get("sort"), available)
+            columns = requested_columns(available, data.get("columns"))
         except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            raise SearchRequestError(str(exc))
 
         try:
-            page = max(int(request.data.get("page", 1)), 1)
+            page = max(int(data.get("page", 1)), 1)
         except (TypeError, ValueError):
             page = 1
 
         queryset = load_relations(apply_ordering(queryset, sort, available), columns)
+
+    with phase("count"):
         total = queryset.count()
-        offset = (page - 1) * PAGE_SIZE
+
+    offset = (page - 1) * PAGE_SIZE
+    with phase("page"):
         page_objects = list(queryset[offset : offset + PAGE_SIZE])
-        groups = {group.key: group for group in relation_groups(self.query_model, _viewable(request))}
-        related = relation_values(self.query_model, page_objects, columns, groups)
-        content_type = ContentType.objects.get_for_model(self.query_model)
+
+    with phase("rows"):
+        groups = {group.key: group for group in relation_groups(model, _viewable(request))}
+        related = relation_values(model, page_objects, columns, groups)
+        content_type = ContentType.objects.get_for_model(model)
         results = [
             {
                 "id": obj.pk,
@@ -181,14 +219,54 @@ class ModelQueryView(ModelResolvingAPIView):
             }
             for obj in page_objects
         ]
-        loaded = [column.name for column in columns if column.on_demand]
+
+    loaded = [column.name for column in columns if column.on_demand]
+    return {
+        "count": total,
+        "page": page,
+        "page_size": PAGE_SIZE,
+        "results": results,
+        "loaded_columns": loaded,
+    }
+
+
+class ModelQueryView(ModelResolvingAPIView):
+    def post(self, request, app_label, model_name):
+        try:
+            payload = _run_search(request, self.query_model, request.data)
+        except SearchRequestError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload)
+
+
+class ModelQueryTimingView(ModelResolvingAPIView):
+    """Times the first page of a search on the server, for the developer debug
+    panel. Only served when APIS_ADVANCED_SEARCH_DEBUG is on."""
+
+    def post(self, request, app_label, model_name):
+        if not debug_enabled():
+            raise NotFound("Not available")
+
+        timings = _Timings()
+        statements = [0]
+
+        def count_statement(execute, sql, params, many, context):
+            statements[0] += 1
+            return execute(sql, params, many, context)
+
+        try:
+            with timings.phase("total"), connection.execute_wrapper(count_statement):
+                payload = _run_search(request, self.query_model, {**request.data, "page": 1}, timings)
+        except SearchRequestError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        phases = {name: ms for name, ms in timings.ms.items() if name != "total"}
         return Response(
             {
-                "count": total,
-                "page": page,
-                "page_size": PAGE_SIZE,
-                "results": results,
-                "loaded_columns": loaded,
+                "total_ms": timings.ms["total"],
+                "phases": phases,
+                "queries": statements[0],
+                "count": payload["count"],
             }
         )
 

@@ -28,14 +28,14 @@ class DescribeTreeTests(TestCase):
     def test_empty_tree_matches_everything(self):
         self.assertEqual(
             describe_tree(self.person, empty_group()),
-            "Person.objects.filter(Q()).distinct()",
+            "Person.objects.filter(\n    Q()\n).distinct()",
         )
 
     def test_single_condition(self):
         tree = group(condition("label", "icontains", "Vienna"))
         self.assertEqual(
             describe_tree(self.place, tree),
-            "Place.objects.filter(Q(label__icontains='Vienna')).distinct()",
+            "Place.objects.filter(\n    Q(label__icontains='Vienna')\n).distinct()",
         )
 
     def test_negated_relation_with_target_filter(self):
@@ -51,10 +51,16 @@ class DescribeTreeTests(TestCase):
         )
         self.assertEqual(
             describe_tree(self.person, tree),
-            "Person.objects.filter("
-            "~(Q(pk__in=PersonLivedInPlace.objects.filter("
-            "obj_object_id__in=Place.objects.filter(Q(label__icontains='Vienna')).values(\"pk\")"
-            ').values("subj_object_id")))'
+            "Person.objects.filter(\n"
+            "    ~(\n"
+            "        Q(\n"
+            "            pk__in=PersonLivedInPlace.objects.filter(\n"
+            "                obj_object_id__in=Place.objects.filter(\n"
+            "                    Q(label__icontains='Vienna')\n"
+            '                ).values("pk")\n'
+            '            ).values("subj_object_id")\n'
+            "        )\n"
+            "    )\n"
             ").distinct()",
         )
 
@@ -74,7 +80,7 @@ class DebugEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json()["orm"],
-            "Place.objects.filter(Q(label__icontains='Vienna')).distinct()",
+            "Place.objects.filter(\n    Q(label__icontains='Vienna')\n).distinct()",
         )
 
     @override_settings(APIS_ADVANCED_SEARCH_DEBUG=False)

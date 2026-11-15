@@ -33,6 +33,11 @@ urlpatterns = [
         name="api-model-query-debug",
     ),
     path(
+        "api/models/<str:app_label>/<str:model_name>/query-timing/",
+        api_views.ModelQueryTimingView.as_view(),
+        name="api-model-query-timing",
+    ),
+    path(
         "api/models/<str:app_label>/<str:model_name>/add-to-collection/",
         api_views.AddResultsToCollectionView.as_view(),
         name="api-model-add-to-collection",
