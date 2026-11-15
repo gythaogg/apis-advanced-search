@@ -1,6 +1,7 @@
 from django.views.generic import TemplateView
 
 from apis_advanced_search.querybuilder.collections import COLLECTIONS_AVAILABLE
+from apis_advanced_search.querybuilder.describe import debug_enabled
 
 
 class SearchView(TemplateView):
@@ -9,4 +10,5 @@ class SearchView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["collections_enabled"] = COLLECTIONS_AVAILABLE
+        context["debug_enabled"] = debug_enabled()
         return context

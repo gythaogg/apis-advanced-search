@@ -30,6 +30,8 @@ The URL prefix (`advanced-search/` above) is up to you. The app checks at startu
 
 In case of trouble, compare your APIS instance with the sample_project APIS instance included here.
 
+The package's markup and styles depend on Bootstrap 5 class names, and expects the host project's base template to load it. 
+
 ## Settings
 `APIS_ANON_VIEWS_ALLOWED` from `apis-core-rdf` is used to determine if the results can be shown to anonymous users.
 

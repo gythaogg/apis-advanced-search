@@ -23,7 +23,9 @@
        data-collections-url="{% url 'apis_advanced_search:api-collections' %}"
        data-saved-queries-url="{% url 'apis_advanced_search:api-saved-queries' %}"
        data-is-authenticated="{{ request.user.is_authenticated|yesno:'true,false' }}"
-       data-collections-enabled="{{ collections_enabled|yesno:'true,false' }}">
+       data-collections-enabled="{{ collections_enabled|yesno:'true,false' }}"
+       data-debug-enabled="{{ debug_enabled|yesno:'true,false' }}"
+       data-query-debug-url-template="{% url 'apis_advanced_search:api-model-query-debug' app_label='__app__' model_name='__model__' %}">
 
     <div class="row mt-3">
       <div class="col-12 col-xl-9 mx-auto">
@@ -47,6 +49,32 @@
         <div id="qb-results"></div>
       </div>
     </div>
+
+    {% if debug_enabled %}
+      {# The overlay is opened and closed by toggling this checkbox, so it works with CSS alone. The script only sets it and fills the text. #}
+      <input type="checkbox" id="qb-debug-toggle" class="qb-debug-toggle" hidden>
+      <div class="qb-debug-overlay position-fixed top-0 start-0 end-0 bottom-0 p-3 align-items-center justify-content-center" id="qb-debug-overlay">
+        <div class="qb-debug-panel bg-dark text-light rounded p-3 overflow-auto" role="dialog" aria-modal="true" aria-labelledby="qb-debug-title">
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <h2 id="qb-debug-title" class="h6 mb-0 me-auto">Developer: last query</h2>
+            <span id="qb-debug-meta" class="small text-secondary"></span>
+            <button type="button" class="btn btn-sm btn-outline-light" data-debug-close>Close</button>
+          </div>
+
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="small text-uppercase text-secondary me-auto">Query tree (JSON)</span>
+            <button type="button" class="btn btn-sm btn-outline-light" data-copy="qb-debug-json">Copy</button>
+          </div>
+          <pre id="qb-debug-json" class="qb-debug-code font-monospace small bg-dark border border-secondary text-light rounded p-3 mb-3 overflow-auto"></pre>
+
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="small text-uppercase text-secondary me-auto">Django ORM</span>
+            <button type="button" class="btn btn-sm btn-outline-light" data-copy="qb-debug-orm">Copy</button>
+          </div>
+          <pre id="qb-debug-orm" class="qb-debug-code font-monospace small bg-dark border border-secondary text-light rounded p-3 mb-0 overflow-auto"></pre>
+        </div>
+      </div>
+    {% endif %}
   </div>
 {% endblock %}
 

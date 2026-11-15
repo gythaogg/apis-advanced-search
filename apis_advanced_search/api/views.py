@@ -20,6 +20,7 @@ from apis_advanced_search.querybuilder.columns import (
     row_values,
 )
 from apis_advanced_search.querybuilder.compiler import QueryCompileError, build_queryset
+from apis_advanced_search.querybuilder.describe import debug_enabled, describe_tree
 from apis_advanced_search.querybuilder.introspection import get_filterable_fields
 from apis_advanced_search.querybuilder.registry import (
     get_queryable_models,
@@ -190,6 +191,24 @@ class ModelQueryView(ModelResolvingAPIView):
                 "loaded_columns": loaded,
             }
         )
+
+
+class ModelQueryDebugView(ModelResolvingAPIView):
+    """The Django ORM code behind a query, for the developer debug panel.
+    Gives the same permission checks as the query itself, and is not served
+    at all when APIS_ADVANCED_SEARCH_DEBUG is turned off."""
+
+    def post(self, request, app_label, model_name):
+        if not debug_enabled():
+            raise NotFound("Not available")
+        tree = request.data.get("query") or empty_group()
+        try:
+            # Compile first, so an invalid tree gets the same error the search gives.
+            build_queryset(self.query_model, tree)
+            orm = describe_tree(self.query_model, tree)
+        except (QueryTreeError, QueryCompileError) as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"orm": orm})
 
 
 class CollectionListView(APIView):

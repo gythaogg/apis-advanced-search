@@ -28,6 +28,11 @@ urlpatterns = [
         name="api-model-query",
     ),
     path(
+        "api/models/<str:app_label>/<str:model_name>/query-debug/",
+        api_views.ModelQueryDebugView.as_view(),
+        name="api-model-query-debug",
+    ),
+    path(
         "api/models/<str:app_label>/<str:model_name>/add-to-collection/",
         api_views.AddResultsToCollectionView.as_view(),
         name="api-model-add-to-collection",

@@ -5,6 +5,11 @@
     model: null,
     tree: null,
     queryUrl: null,
+    queryDebugUrl: null,
+    // The query from the most recent successful search, copied as sent, plus
+    // what the debug panel needs to show it. Kept separately from state.tree,
+    // so editing the builder doesn't change what the panel describes.
+    lastRun: null,
     csrfToken: "",
     // Fields/relation-options are fetched once per model label and kept
     // for the rest of the session - a relation filter's target (or a
@@ -51,6 +56,9 @@
   let app, modelSelect, savedQuerySelect, builderRoot, resultsEl, searchBtn;
   // Containers inside the results area, recreated by each renderResults call.
   let columnPanelEl, tableEl;
+  // Empty when the debug panel is turned off in settings, so the results
+  // header doesn't offer a button for it.
+  const debugEls = { toggle: null, json: null, orm: null, meta: null, overlay: null };
   // Index of the chip being dragged to reorder columns, or null.
   let dragColumnIndex = null;
   let idCounter = 0;
@@ -799,6 +807,7 @@
   async function onModelChange(modelLabel, presetTree) {
     state.model = modelLabel;
     state.queryUrl = buildUrl(app.dataset.queryUrlTemplate, modelLabel);
+    state.queryDebugUrl = buildUrl(app.dataset.queryDebugUrlTemplate, modelLabel);
     state.addToCollectionUrl = buildUrl(app.dataset.addToCollectionUrlTemplate, modelLabel);
 
     await fetchFields(modelLabel);
@@ -1302,6 +1311,15 @@
       renderCollectionControls(header, generation);
     }
 
+    // Right-aligned and last, so it stays apart from the working controls.
+    // order-last keeps it there even though collection controls can be
+    // appended after this point, once their fetch completes.
+    if (debugEls.toggle) {
+      header.appendChild(
+        button("Show query", "btn btn-sm btn-outline-secondary ms-auto order-last", openDebugPanel)
+      );
+    }
+
     columnPanelEl = el("div");
     resultsEl.appendChild(columnPanelEl);
     tableEl = el("div");
@@ -1324,9 +1342,101 @@
     renderTable();
   }
 
+  // --- developer debug panel -----------------------------------------------
+
+  function openDebugPanel() {
+    if (!state.lastRun) return;
+    debugEls.toggle.checked = true;
+    loadDebugPanel();
+  }
+
+  function closeDebugPanel() {
+    debugEls.toggle.checked = false;
+  }
+
+  // Shows the last run's tree as sent, and asks the server for the ORM code
+  // that builds the same query. Only the server knows the ORM form, so that
+  // part waits for a response.
+  async function loadDebugPanel() {
+    const run = state.lastRun;
+    debugEls.json.textContent = JSON.stringify(run.query, null, 2);
+    debugEls.meta.textContent = `${run.modelLabel} · last run ${run.ranAt.toLocaleTimeString()}`;
+    debugEls.orm.textContent = "Loading…";
+    try {
+      const data = await fetchJSON(run.debugUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": state.csrfToken,
+        },
+        body: JSON.stringify({ query: run.query }),
+      });
+      debugEls.orm.textContent = data.orm;
+    } catch (err) {
+      debugEls.orm.textContent = `Could not build the ORM query: ${err.message}`;
+    }
+  }
+
+  // navigator.clipboard only exists on secure origins, so fall back to the
+  // older selection-and-copy route when it's missing or refuses.
+  async function copyText(text, btn) {
+    let copied = false;
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } catch (err) {
+        copied = false;
+      }
+    }
+    if (!copied) {
+      const area = el("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      copied = document.execCommand("copy");
+      area.remove();
+    }
+    const original = btn.textContent;
+    btn.textContent = copied ? "Copied" : "Copy failed";
+    setTimeout(() => {
+      btn.textContent = original;
+    }, 1500);
+  }
+
+  function setupDebugPanel() {
+    const toggle = document.getElementById("qb-debug-toggle");
+    if (!toggle) return;
+    debugEls.toggle = toggle;
+    debugEls.overlay = document.getElementById("qb-debug-overlay");
+    debugEls.json = document.getElementById("qb-debug-json");
+    debugEls.orm = document.getElementById("qb-debug-orm");
+    debugEls.meta = document.getElementById("qb-debug-meta");
+
+    // Opening goes through openDebugPanel, which also loads the text, so the
+    // checkbox needs no change handler. Only closing is wired up here.
+    debugEls.overlay.addEventListener("click", (event) => {
+      if (event.target === debugEls.overlay || event.target.closest("[data-debug-close]")) {
+        closeDebugPanel();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && debugEls.toggle.checked) closeDebugPanel();
+    });
+    debugEls.overlay.querySelectorAll("[data-copy]").forEach((copyBtn) => {
+      copyBtn.addEventListener("click", () => {
+        const source = document.getElementById(copyBtn.dataset.copy);
+        copyText(source.textContent, copyBtn);
+      });
+    });
+  }
+
   async function runSearch(page) {
     page = page || 1;
     resultsEl.innerHTML = "<p>Searching…</p>";
+    const sentTree = JSON.parse(JSON.stringify(state.tree));
     try {
       const data = await fetchJSON(state.queryUrl, {
         method: "POST",
@@ -1335,12 +1445,18 @@
           "X-CSRFToken": state.csrfToken,
         },
         body: JSON.stringify({
-          query: state.tree,
+          query: sentTree,
           page: page,
           sort: state.sort,
           columns: state.visibleColumns,
         }),
       });
+      state.lastRun = {
+        query: sentTree,
+        modelLabel: state.model,
+        debugUrl: state.queryDebugUrl,
+        ranAt: new Date(),
+      };
       renderResults(data, page);
     } catch (err) {
       resultsEl.innerHTML = `<div class="alert alert-danger">${escapeHtml(err.message)}</div>`;
@@ -1390,9 +1506,22 @@
     makeSearchable(modelSelect, { placeholder: "Select model…", width: `${longestLabel + 4}ch` });
   }
 
+  // Bootstrap 5 defines --bs-* CSS variables on the page root, and Bootstrap 4
+  // doesn't. The markup relies on Bootstrap 5 class names, so without it the
+  // page would break in less obvious ways. Say so at the top instead.
+  function checkBootstrapVersion() {
+    const bsVariable = getComputedStyle(document.documentElement).getPropertyValue("--bs-body-font-family");
+    if (bsVariable.trim()) return;
+    const warning = el("div", "alert alert-warning");
+    warning.textContent =
+      "Advanced Search needs Bootstrap 5 on this page. Other versions, or no Bootstrap, will show it unstyled.";
+    app.prepend(warning);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     app = document.getElementById("qb-app");
     if (!app) return;
+    checkBootstrapVersion();
 
     state.csrfToken = app.dataset.csrfToken;
     state.collectionsUrl = app.dataset.collectionsUrl;
@@ -1416,6 +1545,7 @@
       loadSavedQuery(Number(savedQuerySelect.value));
     });
     searchBtn.addEventListener("click", () => runSearch(1));
+    setupDebugPanel();
 
     loadModels();
     populateSavedQueriesSelect();

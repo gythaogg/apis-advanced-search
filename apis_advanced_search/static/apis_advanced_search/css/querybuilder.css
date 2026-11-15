@@ -47,3 +47,29 @@
 .qb-column-chip {
   cursor: grab;
 }
+
+/* Developer debug overlay. Bootstrap has no utility that shows an element
+   from a checkbox's :checked state, and no backdrop-colour or viewport-
+   relative size utilities, so those are custom. Everything else (position,
+   padding, colours, scrolling, monospace text) is a utility class in the
+   markup. */
+.qb-debug-overlay {
+  display: none;
+  z-index: 1055;
+  background-color: rgba(0, 0, 0, 0.55);
+}
+
+.qb-debug-toggle:checked ~ .qb-debug-overlay {
+  display: flex;
+}
+
+.qb-debug-panel {
+  width: min(70rem, 100%);
+  max-height: calc(100vh - 2rem);
+}
+
+/* Bootstrap has no white-space utility that keeps line breaks and indentation. */
+.qb-debug-code {
+  max-height: 32vh;
+  white-space: pre;
+}
