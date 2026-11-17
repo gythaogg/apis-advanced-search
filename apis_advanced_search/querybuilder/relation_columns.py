@@ -3,10 +3,11 @@ Relation columns: the related entities reached through a relation from the
 queried model, and fields of those entities.
 
 Each relation the model takes part in is a "group". A group offers one
-column for the related object itself (its text), plus one column per native
-field of the related model. Relation values are loaded for one page at a
-time, with two queries per shown relation (the links, then the targets),
-however many rows there are.
+column for the related object itself (its text), plus one column per field
+of the related model (native values, foreign keys and many-to-many fields).
+Relation values are loaded for one page at a time, with two queries per
+shown relation (the links, then the targets), plus one per shown foreign key
+or many-to-many field, however many rows there are.
 
 Column names (these are what the setting and the browser use):
 
@@ -25,7 +26,9 @@ import dataclasses
 from django.contrib.contenttypes.models import ContentType
 
 from apis_advanced_search.querybuilder.columns import (
-    NATIVE_TYPES,
+    COLUMN_TYPES,
+    FK_TYPE,
+    M2M_TYPE,
     RELATION_TYPE,
     ColumnInfo,
     format_value,
@@ -79,7 +82,7 @@ def relation_groups(model, viewable=lambda m: True) -> list[RelationGroup]:
         fields = [
             column
             for column in own_columns(target_model)
-            if column.type in NATIVE_TYPES
+            if column.type in COLUMN_TYPES
         ]
         groups.append(
             RelationGroup(
@@ -141,10 +144,37 @@ def _links_from_entity(model, group, objects):
     return list(links.values_list(f"{current}_object_id", f"{group.direction}_object_id"))
 
 
-def load_group_matches(model, group: RelationGroup, objects) -> dict:
+def _related_loads(columns: list[ColumnInfo]) -> tuple[list[str], list[str]]:
+    """The foreign-key and many-to-many fields of the related objects that the
+    shown columns need: (select_related names, prefetch_related names)."""
+    select, prefetch = [], []
+    for column in columns:
+        _key, field = split_column_name(column.name)
+        if field is None:
+            continue
+        if column.type == FK_TYPE:
+            select.append(field)
+        elif column.type == M2M_TYPE:
+            prefetch.append(field)
+    return select, prefetch
+
+
+def _with_related(queryset, select, prefetch):
+    # select_related() with no names follows every foreign key, so only call
+    # it when there is something to load.
+    if select:
+        queryset = queryset.select_related(*select)
+    if prefetch:
+        queryset = queryset.prefetch_related(*prefetch)
+    return queryset
+
+
+def load_group_matches(model, group: RelationGroup, objects, select=(), prefetch=()) -> dict:
     """For each object of the page, the related objects it has in this group,
     in the related model's own default ordering, with duplicates removed.
-    Keyed by the object's pk; objects with no matches are left out."""
+    Keyed by the object's pk; objects with no matches are left out. `select`
+    and `prefetch` name the related model's foreign-key and many-to-many
+    fields to load with the targets."""
     if not objects:
         return {}
 
@@ -155,8 +185,12 @@ def load_group_matches(model, group: RelationGroup, objects) -> dict:
         wanted = {obj.pk: getattr(obj, slot) for obj in objects}
         targets = {
             target.pk: target
-            for target in group.target_model.objects.filter(
-                pk__in={v for v in wanted.values() if v is not None}
+            for target in _with_related(
+                group.target_model.objects.filter(
+                    pk__in={v for v in wanted.values() if v is not None}
+                ),
+                select,
+                prefetch,
             )
         }
         return {
@@ -169,7 +203,11 @@ def load_group_matches(model, group: RelationGroup, objects) -> dict:
     target_pks = {target_pk for _subject, target_pk in links}
     # Ordered by the related model's own Meta.ordering, so a cell lists the
     # objects in the same order the related model's lists show them.
-    ordered = list(group.target_model.objects.filter(pk__in=target_pks))
+    ordered = list(
+        _with_related(
+            group.target_model.objects.filter(pk__in=target_pks), select, prefetch
+        )
+    )
     by_pk = {target.pk: target for target in ordered}
     position = {target.pk: index for index, target in enumerate(ordered)}
 
@@ -188,12 +226,26 @@ def load_group_matches(model, group: RelationGroup, objects) -> dict:
 def _cell_texts(column: ColumnInfo, targets) -> list[str]:
     """The text each matched object contributes to a cell: its own text for
     the object column, or just its value for a field column. Empty values
-    are left out rather than shown as blanks."""
+    are left out rather than shown as blanks. Foreign-key and many-to-many
+    values are labels, so a label several objects share is listed once."""
     _key, field = split_column_name(column.name)
     if field is None:
         return [str(target) for target in targets]
-    values = [format_value(getattr(target, field), column.type) for target in targets]
-    return [value for value in values if value]
+    texts = []
+    for target in targets:
+        attr = getattr(target, field)
+        if column.type == FK_TYPE:
+            if attr is not None:
+                texts.append(str(attr))
+        elif column.type == M2M_TYPE:
+            texts.extend(str(item) for item in attr.all())
+        else:
+            value = format_value(attr, column.type)
+            if value:
+                texts.append(value)
+    if column.type in (FK_TYPE, M2M_TYPE):
+        texts = list(dict.fromkeys(texts))
+    return texts
 
 
 def relation_values(model, objects, columns: list[ColumnInfo], groups: dict) -> dict:
@@ -210,7 +262,8 @@ def relation_values(model, objects, columns: list[ColumnInfo], groups: dict) -> 
         by_group.setdefault(column.group, []).append(column)
 
     for key, group_cols in by_group.items():
-        matches = load_group_matches(model, groups[key], objects)
+        select, prefetch = _related_loads(group_cols)
+        matches = load_group_matches(model, groups[key], objects, select, prefetch)
         for subject_pk, targets in matches.items():
             for column in group_cols:
                 values[subject_pk][column.name] = join_preview(_cell_texts(column, targets))
