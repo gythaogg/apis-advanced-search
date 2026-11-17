@@ -410,6 +410,19 @@
     // widgets do.
     requestAnimationFrame(() => makeSearchable(fieldSelect));
 
+    // A JSON field is searched within one key (e.g. "address.city"). The
+    // key input only shows for JSON fields.
+    const keyInput = el("input", "form-control form-control-sm w-auto");
+    keyInput.type = "text";
+    keyInput.placeholder = "key, e.g. address.city";
+    keyInput.setAttribute("aria-label", "Key within the field");
+    keyInput.value = node.key || "";
+    keyInput.addEventListener("input", () => {
+      node.key = keyInput.value;
+    });
+    const showKeyInput = () => keyInput.classList.toggle("d-none", currentField.type !== "json");
+    showKeyInput();
+
     const lookupSelect = el("select", "form-select form-select-sm w-auto");
     const valueContainer = el("span");
 
@@ -452,6 +465,10 @@
       node.lookup = option.value;
       node.value = option.multi ? [] : null;
       node.valueLabel = option.multi ? [] : null;
+      // A key belongs to one JSON field, so it doesn't carry over.
+      node.key = "";
+      keyInput.value = "";
+      showKeyInput();
       populateLookups();
       renderValueWidget();
     });
@@ -469,7 +486,7 @@
 
     const removeBtn = button("✕", "btn btn-sm btn-outline-danger", onRemove);
 
-    row.append(fieldSelect, lookupSelect, valueContainer, removeBtn);
+    row.append(fieldSelect, keyInput, lookupSelect, valueContainer, removeBtn);
     container.appendChild(row);
   }
 

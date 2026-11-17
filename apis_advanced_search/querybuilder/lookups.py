@@ -91,6 +91,21 @@ M2M_LOOKUPS = [
     _opt("not_empty", "is not empty", None, negate=True, multi=False),
 ]
 
+# A JSON field is searched through a key path (see compiler.py), so these
+# apply to the text of one key's value. They are case-insensitive text
+# matches, like the text lookups. "is empty" is the one lookup that can
+# also apply to the whole field, without a key.
+JSON_LOOKUPS = [
+    _opt("icontains", "contains", "icontains"),
+    _opt("not_icontains", "does not contain", "icontains", negate=True),
+    _opt("iexact", "is", "iexact", multi=False),
+    _opt("not_iexact", "is not", "iexact", negate=True, multi=False),
+    _opt("istartswith", "starts with", "istartswith", multi=False),
+    _opt("iendswith", "ends with", "iendswith", multi=False),
+    _opt("empty", "is empty", None, multi=False),
+    _opt("not_empty", "is not empty", None, negate=True, multi=False),
+]
+
 LOOKUPS_BY_TYPE = {
     "text": TEXT_LOOKUPS,
     "number": NUMBER_LOOKUPS,
@@ -99,4 +114,5 @@ LOOKUPS_BY_TYPE = {
     "boolean": BOOLEAN_LOOKUPS,
     "fk": FK_LOOKUPS,
     "m2m": M2M_LOOKUPS,
+    "json": JSON_LOOKUPS,
 }

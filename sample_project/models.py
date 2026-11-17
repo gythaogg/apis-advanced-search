@@ -18,6 +18,8 @@ class Person(E21_Person):
         on_delete=models.SET_NULL,
         related_name="people_born_here",
     )
+    # Free-form extra data, to exercise JSON filtering.
+    details = models.JSONField(null=True, blank=True)
 
 
 class Place(E53_Place):

@@ -31,6 +31,33 @@ def _lookup_option(field_info, lookup_value):
     return None
 
 
+def json_key_path(field_name: str, key: str) -> str:
+    """The Django lookup path to a key inside a JSON field: "address.city"
+    on "details" becomes "details__address__city". Dots separate the keys
+    because "__" is Django's own separator, so keys can't contain it."""
+    parts = [part.strip() for part in key.split(".")]
+    if not key.strip() or any(not part or "__" in part for part in parts):
+        raise QueryCompileError(
+            f"'{key}' is not a valid key for '{field_name}'. Use key names "
+            "separated by dots, such as address.city."
+        )
+    return "__".join([field_name, *parts])
+
+
+def condition_path(field_name, field_info, node, option) -> str:
+    """The lookup path a condition filters on. A JSON field needs a key to
+    search within, except for "is empty", which can check the whole field.
+    Searching the raw JSON text would also match the key names themselves."""
+    if field_info.type != "json":
+        return field_name
+    key = (node.get("key") or "").strip()
+    if key:
+        return json_key_path(field_name, key)
+    if option["lookup"] is None:
+        return field_name
+    raise QueryCompileError(f"Choose a key within '{field_name}' to search")
+
+
 def _condition_q(node, field_map):
     field_name = node["field"]
     lookup_value = node["lookup"]
@@ -43,10 +70,12 @@ def _condition_q(node, field_map):
     if option is None:
         raise QueryCompileError(f"Lookup {lookup_value!r} is not valid for field {field_name!r}")
 
+    path = condition_path(field_name, field_info, node, option)
+
     if option["lookup"] is None:  # "empty" / "not_empty"
-        q = Q(**{f"{field_name}__isnull": True})
+        q = Q(**{f"{path}__isnull": True})
         if field_info.type == "text":
-            q |= Q(**{f"{field_name}__exact": ""})
+            q |= Q(**{f"{path}__exact": ""})
         if option["negate"]:
             q = ~q
         return q
@@ -61,16 +90,16 @@ def _condition_q(node, field_map):
         if django_lookup == "exact":
             # A plain "is one of" - __in already expresses the OR across
             # values in a single query.
-            q = Q(**{f"{field_name}__in": values})
+            q = Q(**{f"{path}__in": values})
         else:
             # icontains/istartswith/iendswith have no __in equivalent, so
             # the OR across values has to be built by hand.
             q = Q()
             for value in values:
-                q |= Q(**{f"{field_name}__{django_lookup}": value})
+                q |= Q(**{f"{path}__{django_lookup}": value})
     else:
         value = raw_value[0] if isinstance(raw_value, list) else raw_value
-        q = Q(**{f"{field_name}__{django_lookup}": value})
+        q = Q(**{f"{path}__{django_lookup}": value})
 
     if option["negate"]:
         q = ~q

@@ -14,6 +14,7 @@ from django.db.models import (
     DecimalField,
     FloatField,
     IntegerField,
+    JSONField,
     TextField,
 )
 from django.db.models.fields.related import ForeignKey, ManyToManyField
@@ -76,6 +77,8 @@ def classify_field(field) -> str | None:
         return "number"
     if isinstance(field, (CharField, TextField)):
         return "text"
+    if isinstance(field, JSONField):
+        return "json"
     return None
 
 

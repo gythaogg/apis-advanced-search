@@ -6,6 +6,11 @@ A condition node:
      "value": "Smith"}
     {"type": "condition", "field": "surname", "lookup": "icontains",
      "value": ["Smith", "Smyth"]}
+    {"type": "condition", "field": "details", "key": "address.city",
+     "lookup": "icontains", "value": "Graz"}
+
+"key" is only used for JSON fields: the dotted path to the value to search
+within (see compiler.py, json_key_path).
 
 "lookup" is one of the per-field-type options from lookups.py. Negation
 is fused into the lookup itself (e.g. "not_icontains" = "does not
@@ -76,6 +81,9 @@ def validate_node(node, _depth=0, _relation_depth=0):
             raise QueryTreeError("A condition is missing 'field'")
         if not node.get("lookup"):
             raise QueryTreeError("A condition is missing 'lookup'")
+        key = node.get("key")
+        if key is not None and not isinstance(key, str):
+            raise QueryTreeError("A condition's 'key' must be text")
     elif node_type == "relation":
         if _relation_depth >= MAX_RELATION_DEPTH:
             raise QueryTreeError("Relation traversal is nested too deeply")

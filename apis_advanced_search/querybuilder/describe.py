@@ -15,6 +15,7 @@ from apis_advanced_search.querybuilder.compiler import (
     QueryCompileError,
     _lookup_option,
     _resolve_relation_model,
+    condition_path,
 )
 from apis_advanced_search.querybuilder.introspection import get_filterable_field_map
 from apis_advanced_search.querybuilder.relations import is_relation_model
@@ -80,10 +81,12 @@ def _condition(node: dict, field_map: dict) -> str:
             f"Lookup {node['lookup']!r} is not valid for field {field_name!r}"
         )
 
+    path = condition_path(field_name, field_info, node, option)
+
     if option["lookup"] is None:  # "empty" / "not_empty"
-        text = _call("Q", f"{field_name}__isnull=True")
+        text = _call("Q", f"{path}__isnull=True")
         if field_info.type == "text":
-            empty_text = _call("Q", f"{field_name}__exact={''!r}")
+            empty_text = _call("Q", f"{path}__exact={''!r}")
             text = _join([text, empty_text], " | ")
     else:
         django_lookup = option["lookup"]
@@ -93,15 +96,15 @@ def _condition(node: dict, field_map: dict) -> str:
             if not values:
                 raise QueryCompileError(f"'{field_name}' needs at least one value")
             if django_lookup == "exact":
-                text = _call("Q", f"{field_name}__in={values!r}")
+                text = _call("Q", f"{path}__in={values!r}")
             else:
                 parts = [
-                    _call("Q", f"{field_name}__{django_lookup}={v!r}") for v in values
+                    _call("Q", f"{path}__{django_lookup}={v!r}") for v in values
                 ]
                 text = _join(parts, " | ")
         else:
             value = raw_value[0] if isinstance(raw_value, list) else raw_value
-            text = _call("Q", f"{field_name}__{django_lookup}={value!r}")
+            text = _call("Q", f"{path}__{django_lookup}={value!r}")
 
     return _wrap("~", text) if option["negate"] else text
 
