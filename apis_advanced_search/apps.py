@@ -9,6 +9,9 @@ class APISAdvancedSearchConfig(AppConfig):
 
     def ready(self):
         from apis_advanced_search import checks  # noqa: F401 - registers system checks
+        from apis_advanced_search.querybuilder import json_values
+
+        json_values.register()
 
         resolver = get_resolver()
 

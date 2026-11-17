@@ -4,9 +4,11 @@ QuerySet. This is the only place that talks to the Django ORM - the
 rest of the package only ever produces/consumes the JSON tree.
 """
 
+from django.db import connections, router
 from django.db.models import Q, QuerySet
 
 from apis_advanced_search.querybuilder.introspection import get_filterable_field_map
+from apis_advanced_search.querybuilder.json_values import VALUE_LOOKUP
 from apis_advanced_search.querybuilder.registry import resolve_model
 from apis_advanced_search.querybuilder.relations import is_relation_model
 from apis_advanced_search.querybuilder.tree import validate_node
@@ -44,21 +46,46 @@ def json_key_path(field_name: str, key: str) -> str:
     return "__".join([field_name, *parts])
 
 
+def _json_key(node) -> str:
+    return (node.get("key") or "").strip()
+
+
 def condition_path(field_name, field_info, node, option) -> str:
-    """The lookup path a condition filters on. A JSON field needs a key to
-    search within, except for "is empty", which can check the whole field.
-    Searching the raw JSON text would also match the key names themselves."""
+    """The lookup path a condition filters on. With a key, a JSON field is
+    searched within that key. Without one, "contains" searches every string
+    value (see json_values.py) and "is empty" checks the whole field. Other
+    JSON lookups need a key, because a text search on the raw JSON would
+    also match the key names themselves."""
     if field_info.type != "json":
         return field_name
-    key = (node.get("key") or "").strip()
+    key = _json_key(node)
     if key:
         return json_key_path(field_name, key)
-    if option["lookup"] is None:
+    if option["lookup"] in (None, "icontains"):
         return field_name
     raise QueryCompileError(f"Choose a key within '{field_name}' to search")
 
 
-def _condition_q(node, field_map):
+def django_lookup_for(field_info, node, option) -> str | None:
+    """The Django lookup a condition compiles to. A "contains" on a JSON
+    field with no key becomes the all-values lookup."""
+    if field_info.type == "json" and not _json_key(node) and option["lookup"] == "icontains":
+        return VALUE_LOOKUP
+    return option["lookup"]
+
+
+def _require_postgres(model):
+    """The all-values JSON search only works on PostgreSQL. Checked here, so
+    the user gets a clear message instead of a database error."""
+    vendor = connections[router.db_for_read(model)].vendor
+    if vendor != "postgresql":
+        raise QueryCompileError(
+            "Searching all values of a JSON field needs a PostgreSQL database. "
+            "Choose a key to search within instead."
+        )
+
+
+def _condition_q(node, field_map, model):
     field_name = node["field"]
     lookup_value = node["lookup"]
 
@@ -71,6 +98,9 @@ def _condition_q(node, field_map):
         raise QueryCompileError(f"Lookup {lookup_value!r} is not valid for field {field_name!r}")
 
     path = condition_path(field_name, field_info, node, option)
+    django_lookup = django_lookup_for(field_info, node, option)
+    if django_lookup == VALUE_LOOKUP:
+        _require_postgres(model)
 
     if option["lookup"] is None:  # "empty" / "not_empty"
         q = Q(**{f"{path}__isnull": True})
@@ -80,7 +110,6 @@ def _condition_q(node, field_map):
             q = ~q
         return q
 
-    django_lookup = option["lookup"]
     raw_value = node.get("value")
 
     if option["multi"] and isinstance(raw_value, list):
@@ -189,7 +218,7 @@ def _node_q(node, model, field_map):
         return _group_q(node, model, field_map)
     if node_type == "relation":
         return _relation_q(node, model)
-    return _condition_q(node, field_map)
+    return _condition_q(node, field_map, model)
 
 
 def build_queryset(model, tree: dict) -> QuerySet:

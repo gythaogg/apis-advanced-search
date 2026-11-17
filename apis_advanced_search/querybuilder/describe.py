@@ -16,6 +16,7 @@ from apis_advanced_search.querybuilder.compiler import (
     _lookup_option,
     _resolve_relation_model,
     condition_path,
+    django_lookup_for,
 )
 from apis_advanced_search.querybuilder.introspection import get_filterable_field_map
 from apis_advanced_search.querybuilder.relations import is_relation_model
@@ -89,7 +90,7 @@ def _condition(node: dict, field_map: dict) -> str:
             empty_text = _call("Q", f"{path}__exact={''!r}")
             text = _join([text, empty_text], " | ")
     else:
-        django_lookup = option["lookup"]
+        django_lookup = django_lookup_for(field_info, node, option)
         raw_value = node.get("value")
         if option["multi"] and isinstance(raw_value, list):
             values = [v for v in raw_value if v not in (None, "")]

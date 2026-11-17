@@ -414,7 +414,7 @@
     // key input only shows for JSON fields.
     const keyInput = el("input", "form-control form-control-sm w-auto");
     keyInput.type = "text";
-    keyInput.placeholder = "key, e.g. address.city";
+    keyInput.placeholder = "key or leave blank for any value";
     keyInput.setAttribute("aria-label", "Key within the field");
     keyInput.value = node.key || "";
     keyInput.addEventListener("input", () => {
