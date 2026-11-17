@@ -23,3 +23,14 @@ APIS_ANON_VIEWS_ALLOWED = True
 APIS_ADVANCED_SEARCH_COLUMNS = {
     "sample_project.person": ["date_of_birth", "date_of_death", "gender"],
 }
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "advanced_search_sample_project_db",
+        "USER": "advanced_search_admin",
+        "PASSWORD": "advanced_search_password",
+        "HOST": "localhost",
+        "PORT": "5432",
+    }
+}
