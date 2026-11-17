@@ -18,8 +18,26 @@ def check_collections_app_installed(app_configs, **kwargs):
     ]
 
 
+def _content_types_ready(databases) -> bool:
+    """Whether every database checked already has the content-types table.
+    Relation columns read content types, so on a database that has not been
+    migrated yet (such as before the first `migrate`) this check is skipped
+    rather than failing the command that would create the tables."""
+    from django.contrib.contenttypes.models import ContentType
+    from django.db import DatabaseError, connections
+
+    table = ContentType._meta.db_table
+    for alias in databases or connections:
+        try:
+            if table not in connections[alias].introspection.table_names():
+                return False
+        except DatabaseError:
+            return False
+    return True
+
+
 @register()
-def check_result_columns_setting(app_configs, **kwargs):
+def check_result_columns_setting(app_configs, databases=None, **kwargs):
     """Every entry in APIS_ADVANCED_SEARCH_COLUMNS must name a registered
     model and fields of it. Anything else would silently show no
     column, so it is reported here instead."""
@@ -28,6 +46,8 @@ def check_result_columns_setting(app_configs, **kwargs):
     from apis_advanced_search.querybuilder.relation_columns import all_columns
 
     config = configured_columns()
+    if config and not _content_types_ready(databases):
+        return []
     if not isinstance(config, dict):
         return [
             Warning(
