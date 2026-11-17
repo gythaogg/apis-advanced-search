@@ -17,6 +17,7 @@ Design: local/docs/decisions/0004-m03-result-columns.md
 """
 
 import dataclasses
+import json
 
 from apis_core.relations.models import Relation
 from django.conf import settings
@@ -29,7 +30,9 @@ from apis_advanced_search.querybuilder.introspection import (
     classify_field,
 )
 
-NATIVE_TYPES = {"text", "number", "date", "datetime", "boolean"}
+# JSON values are on the row already, so they are native too: no extra query.
+NATIVE_TYPES = {"text", "number", "date", "datetime", "boolean", "json"}
+JSON_TYPE = "json"
 FK_TYPE = "fk"
 M2M_TYPE = "m2m"
 RELATION_TYPE = "relation"
@@ -59,8 +62,8 @@ class ColumnInfo:
     def sortable(self) -> bool:
         # Many-to-many and relation columns can't be sorted on: a row with
         # several values would have to repeat, which breaks sorting and
-        # the page counts.
-        return self.group is None and self.type not in (M2M_TYPE, RELATION_TYPE)
+        # the page counts. JSON documents have no useful order either.
+        return self.group is None and self.type not in (M2M_TYPE, RELATION_TYPE, JSON_TYPE)
 
     @property
     def on_demand(self) -> bool:
@@ -151,8 +154,13 @@ def format_value(value, column_type):
         return ""
     if column_type == "boolean":
         return _("Yes") if value else _("No")
-    text = localize(value)
-    if column_type == "text" and len(text) > TEXT_PREVIEW_CHARS:
+    if column_type == JSON_TYPE:
+        # The whole document as compact JSON, with the same preview length
+        # as long text.
+        text = json.dumps(value, ensure_ascii=False)
+    else:
+        text = localize(value)
+    if column_type in ("text", JSON_TYPE) and len(text) > TEXT_PREVIEW_CHARS:
         text = text[:TEXT_PREVIEW_CHARS].rstrip() + "…"
     return text
 
