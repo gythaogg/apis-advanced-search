@@ -9,8 +9,17 @@ class Profession(SimpleLabelModel):
     pass
 
 
+STATUS_CHOICES = [
+    ("active", "Active"),
+    ("retired", "Retired"),
+    ("unknown", "Unknown"),
+]
+
+
 class Person(E21_Person):
     profession = models.ManyToManyField(Profession, blank=True, related_name="persons")
+    # A fixed list of values, to exercise choice filtering.
+    status = models.CharField(max_length=7, choices=STATUS_CHOICES, default="unknown")
     place_of_birth = models.ForeignKey(
         "Place",
         null=True,

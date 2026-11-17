@@ -86,7 +86,7 @@ def _condition(node: dict, field_map: dict) -> str:
 
     if option["lookup"] is None:  # "empty" / "not_empty"
         text = _call("Q", f"{path}__isnull=True")
-        if field_info.type == "text":
+        if field_info.type in ("text", "choice"):
             empty_text = _call("Q", f"{path}__exact={''!r}")
             text = _join([text, empty_text], " | ")
     else:

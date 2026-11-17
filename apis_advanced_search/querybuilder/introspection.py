@@ -44,6 +44,9 @@ class FieldInfo:
     lookups: list
     target_model: str | None = None
     autocomplete_url: str | None = None
+    # For choice fields only: the fixed values to pick from, as
+    # {"value", "label"} dicts.
+    choices: list | None = None
 
     def to_dict(self):
         return {
@@ -59,6 +62,7 @@ class FieldInfo:
             ],
             "target_model": self.target_model,
             "autocomplete_url": self.autocomplete_url,
+            "choices": self.choices,
         }
 
 
@@ -76,7 +80,8 @@ def classify_field(field) -> str | None:
     if isinstance(field, (IntegerField, FloatField, DecimalField)):
         return "number"
     if isinstance(field, (CharField, TextField)):
-        return "text"
+        # A text field with fixed choices is picked from a list, not typed.
+        return "choice" if field.choices else "text"
     if isinstance(field, JSONField):
         return "json"
     return None
@@ -112,6 +117,11 @@ def get_filterable_fields(model) -> list[FieldInfo]:
             target_ct = ContentType.objects.get_for_model(field.related_model)
             info.target_model = f"{target_ct.app_label}.{target_ct.model}"
             info.autocomplete_url = reverse("apis_core:generic:autocomplete", args=[target_ct])
+        if field_type == "choice":
+            # flatchoices also flattens grouped choices into one list.
+            info.choices = [
+                {"value": value, "label": str(label)} for value, label in field.flatchoices
+            ]
         # The primary key is a technical identifier, not something a user
         # would reach for first - Django's own field order puts it first
         # regardless of model, so move it to the back rather than guessing

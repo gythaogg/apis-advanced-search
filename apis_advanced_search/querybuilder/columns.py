@@ -31,7 +31,7 @@ from apis_advanced_search.querybuilder.introspection import (
 )
 
 # JSON values are on the row already, so they are native too: no extra query.
-NATIVE_TYPES = {"text", "number", "date", "datetime", "boolean", "json"}
+NATIVE_TYPES = {"text", "choice", "number", "date", "datetime", "boolean", "json"}
 JSON_TYPE = "json"
 FK_TYPE = "fk"
 M2M_TYPE = "m2m"

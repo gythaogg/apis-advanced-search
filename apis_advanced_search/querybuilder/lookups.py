@@ -91,6 +91,15 @@ M2M_LOOKUPS = [
     _opt("not_empty", "is not empty", None, negate=True, multi=False),
 ]
 
+# A choice field is picked from a fixed list, so it reads like a many-to-many
+# field: the user picks one or more of the choices.
+CHOICE_LOOKUPS = [
+    _opt("exact", "includes", "exact"),
+    _opt("not_exact", "excludes", "exact", negate=True),
+    _opt("empty", "is empty", None, multi=False),
+    _opt("not_empty", "is not empty", None, negate=True, multi=False),
+]
+
 # A JSON field is searched through a key path (see compiler.py), so these
 # apply to the text of one key's value. They are case-insensitive text
 # matches, like the text lookups. "is empty" is the one lookup that can
@@ -115,4 +124,5 @@ LOOKUPS_BY_TYPE = {
     "fk": FK_LOOKUPS,
     "m2m": M2M_LOOKUPS,
     "json": JSON_LOOKUPS,
+    "choice": CHOICE_LOOKUPS,
 }

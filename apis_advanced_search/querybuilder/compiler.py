@@ -104,7 +104,7 @@ def _condition_q(node, field_map, model):
 
     if option["lookup"] is None:  # "empty" / "not_empty"
         q = Q(**{f"{path}__isnull": True})
-        if field_info.type == "text":
+        if field_info.type in ("text", "choice"):
             q |= Q(**{f"{path}__exact": ""})
         if option["negate"]:
             q = ~q

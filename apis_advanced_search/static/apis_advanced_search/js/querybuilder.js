@@ -176,6 +176,17 @@
     window.jQuery(select).select2(Object.assign({ theme: "bootstrap-5", width: "auto" }, select2Options));
   }
 
+  // For a multi-select select2: select2 sizes its search input inline, so it
+  // clips the placeholder and any typed text. Laying the selection row out as
+  // flex lets the search field take the free space beside the chosen values;
+  // w-100 is !important, so it also overrides select2's inline width.
+  function fitMultiSearchField($select) {
+    const rendered = $select.next(".select2-container").find(".select2-selection__rendered");
+    rendered.addClass("d-flex flex-wrap align-items-center");
+    rendered.find(".select2-search--inline").addClass("flex-grow-1");
+    rendered.find(".select2-search__field").addClass("w-100");
+  }
+
   // select2 only notifies of a selection through jQuery's event system, not
   // a real native DOM event - a plain addEventListener("change", ...) on a
   // select2-enhanced <select> never fires. Any select that might be passed
@@ -353,16 +364,7 @@
           processResults: (data) => data,
         },
       });
-      if (multiple) {
-        // select2 sizes its search input inline, so it clips the placeholder
-        // and any typed text. Laying the selection row out as flex lets the
-        // search field take the free space beside the chips; w-100 is
-        // !important, so it also overrides select2's inline width.
-        const rendered = $select.next(".select2-container").find(".select2-selection__rendered");
-        rendered.addClass("d-flex flex-wrap align-items-center");
-        rendered.find(".select2-search--inline").addClass("flex-grow-1");
-        rendered.find(".select2-search__field").addClass("w-100");
-      }
+      if (multiple) fitMultiSearchField($select);
       // select2's own "data" always reflects the full current selection,
       // for both single and multi mode, so one "change" handler covers
       // picking, removing a chip, and clearing.
@@ -379,9 +381,50 @@
     return select;
   }
 
+  // A choice field's value is picked from its fixed list. "includes" and
+  // "excludes" take one or more choices, the same as a many-to-many field.
+  function buildChoiceInput(fieldInfo, multiple, currentValue, onChange) {
+    const select = el("select", "form-select form-select-sm");
+    if (multiple) select.multiple = true;
+
+    const selected = multiple
+      ? Array.isArray(currentValue) ? currentValue : []
+      : currentValue ? [currentValue] : [];
+    (fieldInfo.choices || []).forEach((choice) => {
+      const option = el("option");
+      option.value = choice.value;
+      option.textContent = choice.label;
+      option.selected = selected.includes(choice.value);
+      select.appendChild(option);
+    });
+
+    // select2 needs the element attached to the DOM before it can be initialized.
+    requestAnimationFrame(() => {
+      if (!window.jQuery) return;
+      const $select = window.jQuery(select);
+      $select.select2({
+        theme: "bootstrap-5",
+        width: multiple ? "100%" : "auto",
+        placeholder: "Choose…",
+        allowClear: !multiple,
+        multiple: multiple,
+      });
+      if (multiple) fitMultiSearchField($select);
+    });
+
+    onSelectChange(select, () => {
+      const picked = [...select.selectedOptions].map((option) => option.value);
+      onChange(multiple ? picked : picked[0] ?? null);
+    });
+    return select;
+  }
+
   function buildValueInput(fieldInfo, lookupOption, currentValue, currentLabel, onChange) {
     if (fieldInfo.type === "fk" || fieldInfo.type === "m2m") {
       return buildRelationInput(fieldInfo, lookupOption.multi, currentValue, currentLabel, onChange);
+    }
+    if (fieldInfo.type === "choice") {
+      return buildChoiceInput(fieldInfo, lookupOption.multi, currentValue, onChange);
     }
     if (lookupOption.multi) {
       return buildChipListInput(fieldInfo, currentValue, onChange);
