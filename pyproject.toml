@@ -1,6 +1,6 @@
 [project]
 name = "apis-advanced-search"
-version = "0.0.11"
+version = "0.0.12"
 description = "An intuitive querybuilder inteface for prosopographical projects built on apis-core-rdf"
 authors = [ { name = "Saranya Balasubramanian" } ]
 license = { text = "MIT" }
