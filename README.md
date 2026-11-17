@@ -32,6 +32,74 @@ In case of trouble, compare your APIS instance with the sample_project APIS inst
 
 The package's markup and styles depend on Bootstrap 5 class names, and expects the host project's base template to load it. 
 
+## Sample project database (PostgreSQL)
+
+The sample project uses PostgreSQL. Searching all values of a JSON field (a condition with no key) only works on PostgreSQL. The other search features also run on SQLite, but the sample project uses PostgreSQL so that the full test suite runs.
+
+The connection settings are in `sample_project/settings.py`:
+
+```python
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "advanced_search_sample_project_db",
+        "USER": "advanced_search_admin",
+        "PASSWORD": "advanced_search_password",
+        "HOST": "localhost",
+        "PORT": "5432",
+    }
+}
+```
+
+The password is for local development only. Do not reuse it anywhere else.
+
+### Create the role and database
+
+Run these as a PostgreSQL superuser. `sudo -u postgres psql`.
+
+```sql
+-- The role needs CREATEDB so Django's test runner can create its own
+-- test database (test_advanced_search_sample_project_db).
+CREATE ROLE advanced_search_admin WITH LOGIN PASSWORD 'advanced_search_password' CREATEDB;
+
+CREATE DATABASE advanced_search_sample_project_db OWNER advanced_search_admin;
+
+\c advanced_search_sample_project_db
+GRANT ALL ON SCHEMA public TO advanced_search_admin;
+
+-- Optional: check the result.
+\du advanced_search_admin
+\l advanced_search_sample_project_db
+```
+
+`GRANT ALL ON SCHEMA public` is needed on PostgreSQL 15 and later, where the `public` schema is no longer writable by every user.
+
+If the role or database already exist, drop them first (this deletes all data in the database):
+
+```sql
+DROP DATABASE IF EXISTS advanced_search_sample_project_db;
+DROP ROLE IF EXISTS advanced_search_admin;
+```
+
+### Create the tables and run the sample project
+
+From the project root:
+
+```bash
+uv run python manage.py migrate
+uv run python manage.py runserver
+```
+
+`migrate` creates the tables in the new database. Run it again after pulling changes that add migrations.
+
+### Run the tests
+
+```bash
+uv run python manage.py test apis_advanced_search
+```
+
+The test runner creates and drops its own `test_advanced_search_sample_project_db`, so the sample database is not touched. This needs the `CREATEDB` role attribute set above.
+
 ## Settings
 `APIS_ANON_VIEWS_ALLOWED` from `apis-core-rdf` is used to determine if the results can be shown to anonymous users.
 
