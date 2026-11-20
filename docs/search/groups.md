@@ -27,8 +27,8 @@ Find Tibetan scholars who are quoted by a person, with or without a name.
 1. Search for **Person**.
 2. Add a field filter: **Origin** is **Tibetan**.
 3. Add a filter group and set its connector to **OR**.
-4. In the group, add a relation filter: **has relation**, quoted without name by a person.
-5. In the same group, add a second relation filter: **has relation**, quoted with name by a person.
+4. In the group, add a relation filter: **has**, quoted without name by a person.
+5. In the same group, add a second relation filter: **has**, quoted with name by a person.
 
 The top-level connector stays **AND**, so the origin filter and the group must both match.
 

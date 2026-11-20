@@ -23,14 +23,19 @@ Under **And the relation itself**, add field filters on the relation model's fie
 
 The related entity block filters the subject or object entity. It accepts the fields and relations of that entity, so relation filters can be nested.
 
-## Has or does not have the relation
+## How many relations
 
-The first select in the relation filter sets the condition:
+The first select in the relation filter sets how many matching relations are required:
 
-- **has relation**: matches records that have the relation, with the conditions below.
-- **does not have relation**: matches records that do not have a relation that meets those conditions.
+- **has**: at least one relation matches, with the conditions below.
+- **does not have**: no relation matches those conditions.
+- **has at least N**: N or more relations match.
+- **has at most N**: N or fewer relations match. This includes records with no relations.
+- **has exactly N**: exactly N relations match.
 
-When set to **does not have relation**, the own-relation block reads **No relation where the relation itself matches**.
+A relation counts once for each relation record. Two relations to the same related entity count as two.
+
+When set to **does not have**, the own-relation block reads **No relation where the relation itself matches**.
 
 ## Examples
 
