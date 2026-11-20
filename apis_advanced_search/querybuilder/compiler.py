@@ -5,13 +5,13 @@ rest of the package only ever produces/consumes the JSON tree.
 """
 
 from django.db import connections, router
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 
 from apis_advanced_search.querybuilder.introspection import get_filterable_field_map
 from apis_advanced_search.querybuilder.json_values import VALUE_LOOKUP
 from apis_advanced_search.querybuilder.registry import resolve_model
 from apis_advanced_search.querybuilder.relations import is_relation_model
-from apis_advanced_search.querybuilder.tree import validate_node
+from apis_advanced_search.querybuilder.tree import relation_count_bounds, validate_node
 
 
 class QueryCompileError(ValueError):
@@ -164,12 +164,41 @@ def _filtered_pks(model, filter_tree):
     return model.objects.filter(q).values("pk")
 
 
+def _at_least_q(relation_qs, side, n):
+    """Entities (on `side` of the relation) that have at least `n` of the
+    relation rows in `relation_qs`. The default ordering is cleared so the
+    GROUP BY is not extended by it."""
+    column = f"{side}_object_id"
+    if n <= 1:
+        return Q(pk__in=relation_qs.order_by().values(column))
+    counted = (
+        relation_qs.order_by()
+        .values(column)
+        .annotate(relation_count=Count("pk"))
+        .filter(relation_count__gte=n)
+        .values(column)
+    )
+    return Q(pk__in=counted)
+
+
+def _count_q(relation_qs, side, low, high):
+    """Entities with between `low` and `high` matching relation rows
+    (`high` None = no upper bound)."""
+    q = Q()
+    if low >= 1:
+        q = _at_least_q(relation_qs, side, low)
+    if high is not None:
+        q = q & ~_at_least_q(relation_qs, side, high + 1)
+    return q
+
+
 def _relation_q(node, model):
     direction = node.get("direction")
     if direction not in ("subj", "obj"):
         raise QueryCompileError(f"Invalid relation direction: {direction!r}")
     relation_label = node.get("relation_model")
     target_filter = node.get("target_filter")
+    low, high = relation_count_bounds(node)
 
     if relation_label is None:
         # Direct mode: `model` IS the relation, and we're filtering its own
@@ -180,12 +209,18 @@ def _relation_q(node, model):
                 "A relation node without 'relation_model' can only be used "
                 "when the current model is itself a Relation"
             )
+        if (low, high) not in ((1, None), (0, 0)):
+            raise QueryCompileError(
+                "A relation's own slot can only be has or does not have"
+            )
         target_model = model.subj_model_type() if direction == "subj" else model.obj_model_type()
         target_pks = _filtered_pks(target_model, target_filter)
         if target_pks is not None:
             q = Q(**{f"{direction}_object_id__in": target_pks})
         else:
             q = Q(**{f"{direction}_object_id__isnull": False})
+        if (low, high) == (0, 0):
+            q = ~q
     else:
         # Traverse mode: `model` is an entity reachable via this relation.
         # `direction` names the slot the *target* sits in, so `model`
@@ -205,10 +240,8 @@ def _relation_q(node, model):
         if target_pks is not None:
             relation_qs = relation_qs.filter(**{f"{direction}_object_id__in": target_pks})
 
-        q = Q(pk__in=relation_qs.values(f"{current_side}_object_id"))
+        q = _count_q(relation_qs, current_side, low, high)
 
-    if node.get("negate"):
-        q = ~q
     return q
 
 

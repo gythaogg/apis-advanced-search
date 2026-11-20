@@ -29,8 +29,13 @@ explicit "exclude this group" flag.
 
 A relation node:
     {"type": "relation", "relation_model": "sample_project.personlivedinplace",
-     "direction": "obj", "negate": false,
+     "direction": "obj", "min_count": 1, "max_count": null,
      "own_filter": group-or-null, "target_filter": group-or-null}
+
+"min_count" and "max_count" bound how many matching relation rows the
+current entity must have (see relation_count_bounds). "max_count": 0 is
+"does not have". Older trees may carry "negate" instead; it is read as
+the equivalent count bounds. See local/docs/decisions/0009.
 
 "direction" always names which GFK slot (subj/obj) the *target* sits in,
 regardless of mode:
@@ -54,6 +59,29 @@ rather than just boolean logic.
 
 class QueryTreeError(ValueError):
     pass
+
+
+def relation_count_bounds(node) -> tuple[int, int | None]:
+    """The (min, max) matching relation rows a relation node requires.
+
+    max is None for no upper bound. Legacy trees with "negate" (no count
+    keys) map to the equivalent bounds: negated is (0, 0), otherwise (1, None).
+    """
+    if "min_count" not in node and "max_count" not in node:
+        return (0, 0) if node.get("negate") else (1, None)
+
+    low = node.get("min_count", 0)
+    high = node.get("max_count")
+    if isinstance(low, bool) or not isinstance(low, int) or low < 0:
+        raise QueryTreeError("A relation's minimum count must be a whole number, 0 or more")
+    if high is not None:
+        if isinstance(high, bool) or not isinstance(high, int) or high < 0:
+            raise QueryTreeError("A relation's maximum count must be a whole number, 0 or more")
+        if high < low:
+            raise QueryTreeError("A relation's maximum count is below its minimum count")
+    if low == 0 and high is None:
+        raise QueryTreeError("A relation filter needs a minimum count or a maximum count")
+    return low, high
 
 
 MAX_GROUP_DEPTH = 25
@@ -89,6 +117,11 @@ def validate_node(node, _depth=0, _relation_depth=0):
             raise QueryTreeError("Relation traversal is nested too deeply")
         if node.get("direction") not in ("subj", "obj"):
             raise QueryTreeError(f"Invalid relation direction: {node.get('direction')!r}")
+        bounds = relation_count_bounds(node)
+        if node.get("relation_model") is None and bounds not in ((1, None), (0, 0)):
+            raise QueryTreeError(
+                "A relation's own slot can only be has or does not have"
+            )
         own_filter = node.get("own_filter")
         if own_filter is not None:
             validate_node(own_filter, _depth + 1, _relation_depth)

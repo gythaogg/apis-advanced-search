@@ -148,7 +148,7 @@
   // A relation node starts with nothing chosen - renderRelation shows a
   // picker for it until relation_model/direction get set.
   function newRelationNode() {
-    return { type: "relation", negate: false };
+    return { type: "relation", min_count: 1, max_count: null };
   }
 
   function el(tag, className) {
@@ -558,7 +558,7 @@
   function renderRelationPicker(node, container, onRemove, ctx, rerender) {
     const row = el("div", "d-flex align-items-center gap-2 flex-wrap");
     const label = el("span", "small text-muted");
-    label.textContent = "Add a relation filter:";
+    label.textContent = "Add a relation filter";
 
     const select = el("select", "form-select form-select-sm w-auto");
     const placeholder = el("option");
@@ -593,6 +593,58 @@
     });
   }
 
+  // How many matching relation rows a relation filter requires, as one of
+  // the phrases the card offers. Trees written before counts existed carry
+  // `negate` instead; it is read as the equivalent bounds.
+  const COUNT_PHRASES = [
+    ["any", "has"],
+    ["none", "does not have"],
+    ["atLeast", "has at least"],
+    ["atMost", "has at most"],
+    ["exactly", "has exactly"],
+  ];
+  const COUNTED_MODES = ["atLeast", "atMost", "exactly"];
+
+  // "has relation" and "has at least 1" store the same bounds, so the phrase
+  // the user picked is remembered per node. It is used only while the bounds
+  // still match it, so a tree edited elsewhere still reads from its bounds.
+  const chosenCountModes = new WeakMap();
+
+  // The noun in the card's sentence, agreeing with the count shown.
+  function relationNoun(mode, n) {
+    return mode === "any" || mode === "none" || n === 1 ? "relation" : "relations";
+  }
+
+  function boundsFor(mode, n) {
+    return {
+      any: [1, null],
+      none: [0, 0],
+      atLeast: [n, null],
+      atMost: [0, n],
+      exactly: [n, n],
+    }[mode];
+  }
+
+  function relationCount(node) {
+    const low = node.min_count !== undefined ? node.min_count : node.negate ? 0 : 1;
+    const high = node.max_count !== undefined ? node.max_count : node.negate ? 0 : null;
+    const chosen = chosenCountModes.get(node);
+    if (chosen && boundsFor(chosen.mode, chosen.n).join() === [low, high].join()) return chosen;
+    if (low === 0 && high === 0) return { mode: "none", n: 0 };
+    if (low === 0 && high !== null) return { mode: "atMost", n: high };
+    if (high === null) return low <= 1 ? { mode: "any", n: 1 } : { mode: "atLeast", n: low };
+    if (low === high) return { mode: "exactly", n: low };
+    return { mode: "atLeast", n: low };
+  }
+
+  function setRelationCount(node, mode, n) {
+    const [low, high] = boundsFor(mode, n);
+    node.min_count = low;
+    node.max_count = high;
+    delete node.negate;
+    chosenCountModes.set(node, { mode, n });
+  }
+
   // Shown once relation_model/direction are chosen: a sentence ("has lived
   // in a Place where: ...") wrapping a nested, fully recursive builder
   // scoped to the target entity, plus an optional secondary block for the
@@ -605,35 +657,71 @@
 
     const header = el("div", "d-flex align-items-center gap-2 flex-wrap mb-2");
 
-    const negateSelect = el("select", "form-select form-select-sm w-auto");
-    [["false", "has relation"], ["true", "does not have relation"]].forEach(([value, text]) => {
+    const direct = node.relation_model === null;
+    const current = relationCount(node);
+    const modeSelect = el("select", "form-select form-select-sm w-auto");
+    (direct ? COUNT_PHRASES.slice(0, 2) : COUNT_PHRASES).forEach(([value, text]) => {
       const option = el("option");
       option.value = value;
       option.textContent = text;
-      if (String(!!node.negate) === value) option.selected = true;
-      negateSelect.appendChild(option);
-    });
-    negateSelect.addEventListener("change", () => {
-      node.negate = negateSelect.value === "true";
+      if (current.mode === value) option.selected = true;
+      modeSelect.appendChild(option);
     });
 
-    // Bold marks the two things being filtered on: the relation's label and
-    // the target entity's name. The article stays plain.
+    const countInput = el("input", "form-control form-control-sm");
+    countInput.type = "number";
+    countInput.min = "0";
+    countInput.step = "1";
+    countInput.style.width = "5rem";
+    countInput.setAttribute("aria-label", "Number of relations");
+    countInput.value = String(current.n);
+    const showCountInput = (mode) => {
+      countInput.hidden = !COUNTED_MODES.includes(mode);
+    };
+    showCountInput(current.mode);
+
+    modeSelect.addEventListener("change", () => {
+      let n = parseInt(countInput.value, 10);
+      if (!Number.isFinite(n) || n < 0) n = 1;
+      if (modeSelect.value === "atLeast" || modeSelect.value === "exactly") n = Math.max(n, 1);
+      setRelationCount(node, modeSelect.value, n);
+      countInput.value = String(n);
+      showCountInput(modeSelect.value);
+      rerender();
+    });
+    countInput.addEventListener("input", () => {
+      const n = parseInt(countInput.value, 10);
+      if (!Number.isFinite(n) || n < 0) return;
+      const mode = modeSelect.value;
+      setRelationCount(node, mode, mode === "atLeast" || mode === "exactly" ? Math.max(n, 1) : n);
+      nounSpan.textContent = relationNoun(mode, n);
+    });
+    countInput.addEventListener("change", () => {
+      if (countInput.value === "" || Number(countInput.value) < 0) countInput.value = String(current.n);
+      const n = parseInt(countInput.value, 10);
+      nounSpan.textContent = relationNoun(modeSelect.value, Number.isFinite(n) ? n : current.n);
+    });
+    // The noun follows the count: "relation" for has / does not have and for
+    // a count of 1, "relations" otherwise. Bold marks the relation's label
+    // and the target entity's name; the article stays plain.
+    const nounSpan = el("span");
+    nounSpan.textContent = relationNoun(current.mode, current.n);
     const sentence = el("span");
     const relationLabel = el("strong");
     relationLabel.textContent = node.label;
     const article = /^[aeiou]/i.test(node.targetVerboseName) ? "an" : "a";
     const targetName = el("strong");
     targetName.textContent = node.targetVerboseName;
-    const direct = node.relation_model === null;
     sentence.append(
+      nounSpan,
+      document.createTextNode(" ("),
       relationLabel,
-      document.createTextNode(direct ? ` (${article} ` : ` ${article} `),
+      document.createTextNode(` ${article} `),
       targetName,
-      document.createTextNode(direct ? ") where:" : " where:")
+      document.createTextNode(") where")
     );
 
-    header.append(negateSelect, sentence);
+    header.append(modeSelect, countInput, sentence);
     header.appendChild(button("Remove relation filter", "btn btn-sm btn-outline-danger ms-auto", onRemove));
     body.appendChild(header);
 
@@ -659,9 +747,9 @@
 
         const ownHeader = el("div", "d-flex align-items-center gap-2 mt-2 mb-1");
         const ownLabel = el("span", "small text-muted");
-        ownLabel.textContent = node.negate
-          ? "No relation where the relation itself matches:"
-          : "And the relation itself:";
+        ownLabel.textContent = relationCount(node).mode === "none"
+          ? "No relation where the relation itself matches"
+          : "And the relation itself";
         const removeOwnBtn = button("✕", "btn btn-sm btn-outline-secondary", () => {
           node.own_filter = null;
           rerender();

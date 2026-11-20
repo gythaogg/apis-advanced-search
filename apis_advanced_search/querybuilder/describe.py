@@ -20,7 +20,7 @@ from apis_advanced_search.querybuilder.compiler import (
 )
 from apis_advanced_search.querybuilder.introspection import get_filterable_field_map
 from apis_advanced_search.querybuilder.relations import is_relation_model
-from apis_advanced_search.querybuilder.tree import validate_node
+from apis_advanced_search.querybuilder.tree import relation_count_bounds, validate_node
 
 
 def debug_enabled() -> bool:
@@ -130,12 +130,35 @@ def _target_pks(model, filter_tree: dict | None) -> str | None:
     )
 
 
+def _at_least(relation_model, calls: list[tuple[str, str]], current_side: str, n: int) -> str:
+    """Mirrors compiler._at_least_q: the plain values() subquery for one
+    row, or a grouped count with HAVING-style filter for several."""
+    column = f'"{current_side}_object_id"'
+    base = f"{relation_model._meta.object_name}.objects"
+    if n <= 1:
+        sub = _chain(base, calls + [("values", column)])
+    else:
+        sub = _chain(
+            base,
+            calls
+            + [
+                ("order_by", ""),
+                ("values", column),
+                ("annotate", "relation_count=Count('pk')"),
+                ("filter", f"relation_count__gte={n}"),
+                ("values", column),
+            ],
+        )
+    return _call("Q", f"pk__in={sub}")
+
+
 def _relation(node: dict, model) -> str:
     direction = node.get("direction")
     if direction not in ("subj", "obj"):
         raise QueryCompileError(f"Invalid relation direction: {direction!r}")
     relation_label = node.get("relation_model")
     target_filter = node.get("target_filter")
+    low, high = relation_count_bounds(node)
 
     if relation_label is None:
         # Direct mode: `model` is the relation itself, filtered on its own slot.
@@ -143,6 +166,10 @@ def _relation(node: dict, model) -> str:
             raise QueryCompileError(
                 "A relation node without 'relation_model' can only be used "
                 "when the current model is itself a Relation"
+            )
+        if (low, high) not in ((1, None), (0, 0)):
+            raise QueryCompileError(
+                "A relation's own slot can only be has or does not have"
             )
         target_model = (
             model.subj_model_type() if direction == "subj" else model.obj_model_type()
@@ -152,32 +179,34 @@ def _relation(node: dict, model) -> str:
             text = _call("Q", f"{direction}_object_id__isnull=False")
         else:
             text = _call("Q", f"{direction}_object_id__in={pks}")
-    else:
-        # Traverse mode: `model` is reached through the relation.
-        relation_model = _resolve_relation_model(relation_label)
-        current_side = "subj" if direction == "obj" else "obj"
-        target_model = (
-            relation_model.subj_model_type()
-            if direction == "subj"
-            else relation_model.obj_model_type()
+        return _wrap("~", text) if (low, high) == (0, 0) else text
+
+    # Traverse mode: `model` is reached through the relation.
+    relation_model = _resolve_relation_model(relation_label)
+    current_side = "subj" if direction == "obj" else "obj"
+    target_model = (
+        relation_model.subj_model_type()
+        if direction == "subj"
+        else relation_model.obj_model_type()
+    )
+
+    calls: list[tuple[str, str]] = []
+    own_filter = node.get("own_filter")
+    if own_filter is not None:
+        own_inner = _node(
+            own_filter, relation_model, get_filterable_field_map(relation_model)
         )
+        calls.append(("filter", own_inner))
+    pks = _target_pks(target_model, target_filter)
+    if pks is not None:
+        calls.append(("filter", f"{direction}_object_id__in={pks}"))
 
-        calls: list[tuple[str, str]] = []
-        own_filter = node.get("own_filter")
-        if own_filter is not None:
-            own_inner = _node(
-                own_filter, relation_model, get_filterable_field_map(relation_model)
-            )
-            calls.append(("filter", own_inner))
-        pks = _target_pks(target_model, target_filter)
-        if pks is not None:
-            calls.append(("filter", f"{direction}_object_id__in={pks}"))
-        calls.append(("values", f'"{current_side}_object_id"'))
-
-        relation_qs = _chain(f"{relation_model._meta.object_name}.objects", calls)
-        text = _call("Q", f"pk__in={relation_qs}")
-
-    return _wrap("~", text) if node.get("negate") else text
+    parts: list[str] = []
+    if low >= 1:
+        parts.append(_at_least(relation_model, calls, current_side, low))
+    if high is not None:
+        parts.append(_wrap("~", _at_least(relation_model, calls, current_side, high + 1)))
+    return _join(parts, " & ") if len(parts) > 1 else parts[0]
 
 
 def _node(node: dict, model, field_map: dict) -> str:
